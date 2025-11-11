@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const helmet = require('helmet');
 const compression = require('compression');
-const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/database');
 const apiRoutes = require('./routes/api');
 const errorHandler = require('./middleware/errorHandler');
@@ -52,20 +51,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ✅ Compression for performance
 app.use(compression());
-
-// ✅ Rate limiter (after CORS fix)
-const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
-  message: {
-    success: false,
-    error: 'Too many requests, please try again later.',
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-app.use('/api/', limiter);
 
 // ✅ Request logging
 app.use((req, res, next) => {
