@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const helmet = require('helmet');
-const cors = require('cors');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/database');
@@ -12,54 +11,51 @@ const logger = require('./utils/logger');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Connect to database
+// ✅ Connect to MongoDB
 connectDB();
 
-// Trust proxy (important for Render)
+// ✅ Trust proxy (needed for Render)
 app.set('trust proxy', 1);
 
-// Security middleware
+// ✅ Security middleware
 app.use(helmet());
 
-// ✅ CORS Configuration
+// ✅ Global CORS Fix (handles preflight first)
 const allowedOrigins = [
   'https://zerogpool.xyz',
   'https://zerogpool-frontend.vercel.app',
   'https://zerogpoolgame.onrender.com',
+  'https://pub-c57fda34f99145fc8d97b0a6b6faa237.r2.dev', // Unity WebGL Cloudflare R2
   'http://localhost:3000',
-  'https://pub-c57fda34f99145fc8d97b0a6b6faa237.r2.dev/',
   'http://localhost:5173',
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, or server-side requests)
-    if (!origin) return callback(null, true);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
 
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn(`Blocked by CORS: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  credentials: true,
-}));
+  if (req.method === 'OPTIONS') {
+    // Respond to preflight immediately
+    return res.sendStatus(204);
+  }
+  next();
+});
 
-// ✅ Handle preflight requests
-app.options('*', cors());
-
-// Body parsing middleware
+// ✅ Body parsers
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Compression middleware
+// ✅ Compression for performance
 app.use(compression());
 
-// Rate limiting
+// ✅ Rate limiter (after CORS fix)
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   message: {
     success: false,
@@ -71,7 +67,7 @@ const limiter = rateLimit({
 
 app.use('/api/', limiter);
 
-// Request logging middleware
+// ✅ Request logging
 app.use((req, res, next) => {
   logger.info(`${req.method} ${req.path}`, {
     ip: req.ip,
@@ -80,11 +76,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Root endpoint
+// ✅ Root endpoint
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'Real Pool 3D Backend API',
+    message: 'ZeroGPool Backend API',
     version: '1.0.0',
     endpoints: {
       health: '/api/health',
@@ -95,10 +91,10 @@ app.get('/', (req, res) => {
   });
 });
 
-// API routes
+// ✅ API routes
 app.use('/api', apiRoutes);
 
-// 404 handler
+// ✅ 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -106,10 +102,10 @@ app.use((req, res) => {
   });
 });
 
-// Error handling middleware (must be last)
+// ✅ Error handler
 app.use(errorHandler);
 
-// Graceful shutdown
+// ✅ Graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM signal received: closing HTTP server');
   server.close(() => {
@@ -126,7 +122,7 @@ process.on('SIGINT', () => {
   });
 });
 
-// Unhandled promise rejection handler
+// ✅ Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
   logger.error('Unhandled Promise Rejection:', err);
   server.close(() => {
@@ -134,7 +130,7 @@ process.on('unhandledRejection', (err) => {
   });
 });
 
-// Start server
+// ✅ Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
 });
