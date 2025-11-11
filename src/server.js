@@ -27,6 +27,7 @@ const allowedOrigins = [
   'https://zerogpool-frontend.vercel.app',
   'https://zerogpoolgame.onrender.com',
   'http://localhost:3000',
+  'https://pub-c57fda34f99145fc8d97b0a6b6faa237.r2.dev/',
   'http://localhost:5173',
 ];
 
