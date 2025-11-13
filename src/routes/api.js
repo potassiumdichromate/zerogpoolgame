@@ -11,10 +11,11 @@ const {
   validateStatsFilter,
 } = require('../middleware/validation');
 const logger = require('../utils/logger');
+const blockchainService = require('../utils/blockchain');
 
 // ==================== PUBLIC ENDPOINTS ====================
 
-// POST /api/auth/login - Login and get JWT token
+// POST /api/auth/login - Login and get JWT token + Record session on blockchain
 router.post('/auth/login', validateLogin, async (req, res, next) => {
   try {
     const { walletAddress } = req.body;
@@ -35,6 +36,34 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
 
     logger.info(`User logged in: ${normalizedAddress}`);
 
+    // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain (non-blocking)
+    let blockchainResult = null;
+    if (blockchainService.isReady()) {
+      // Record session asynchronously - don't wait for it
+      blockchainService.recordSession(normalizedAddress, userData.stats)
+        .then(result => {
+          if (result && result.success) {
+            logger.info(`Blockchain session recorded for ${normalizedAddress}: ${result.transactionHash}`);
+          }
+        })
+        .catch(error => {
+          logger.error(`Failed to record blockchain session for ${normalizedAddress}:`, error);
+        });
+      
+      // Optionally, get current login count from blockchain
+      try {
+        const loginCount = await blockchainService.getUserLoginCount(normalizedAddress);
+        if (loginCount !== null) {
+          blockchainResult = {
+            onChainLoginCount: loginCount,
+            blockchainEnabled: true,
+          };
+        }
+      } catch (error) {
+        logger.error('Failed to get blockchain login count:', error);
+      }
+    }
+
     res.json({
       success: true,
       message: 'Login successful',
@@ -42,6 +71,7 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
         token,
         walletAddress: normalizedAddress,
         expiresIn: process.env.JWT_EXPIRES_IN || '30d',
+        ...(blockchainResult && { blockchain: blockchainResult }),
       },
     });
   } catch (error) {
@@ -232,12 +262,96 @@ router.get('/player/stats', authenticate, validateStatsFilter, async (req, res, 
   }
 });
 
+// ==================== BLOCKCHAIN ENDPOINTS ====================
+
+// GET /api/blockchain/session/:walletAddress - Get user's latest blockchain session
+router.get('/blockchain/session/:walletAddress', async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+    const normalizedAddress = walletAddress.toLowerCase();
+
+    if (!blockchainService.isReady()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Blockchain service not available',
+      });
+    }
+
+    const session = await blockchainService.getLatestSession(normalizedAddress);
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: 'No blockchain sessions found for this wallet',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: session,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/blockchain/login-count/:walletAddress - Get user's on-chain login count
+router.get('/blockchain/login-count/:walletAddress', async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+    const normalizedAddress = walletAddress.toLowerCase();
+
+    if (!blockchainService.isReady()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Blockchain service not available',
+      });
+    }
+
+    const loginCount = await blockchainService.getUserLoginCount(normalizedAddress);
+
+    res.json({
+      success: true,
+      data: {
+        walletAddress: normalizedAddress,
+        onChainLoginCount: loginCount || 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/blockchain/stats - Get blockchain contract statistics
+router.get('/blockchain/stats', async (req, res, next) => {
+  try {
+    if (!blockchainService.isReady()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Blockchain service not available',
+      });
+    }
+
+    const stats = await blockchainService.getBlockchainStats();
+
+    res.json({
+      success: true,
+      data: stats || { totalUsers: 0, totalSessions: 0 },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Health check endpoint
 router.get('/health', (req, res) => {
   res.json({
     success: true,
     status: 'OK',
     timestamp: new Date().toISOString(),
+    blockchain: {
+      enabled: blockchainService.isReady(),
+    },
   });
 });
 

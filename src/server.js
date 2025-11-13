@@ -6,12 +6,26 @@ const connectDB = require('./config/database');
 const apiRoutes = require('./routes/api');
 const errorHandler = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
+const blockchainService = require('./utils/blockchain'); // 🔗 NEW
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ✅ Connect to MongoDB
 connectDB();
+
+// 🔗 Initialize Blockchain Service (NEW)
+blockchainService.initialize()
+  .then(() => {
+    if (blockchainService.isReady()) {
+      logger.info('🔗 Blockchain service initialized and ready');
+    } else {
+      logger.warn('⚠️ Blockchain service disabled - check .env configuration');
+    }
+  })
+  .catch(err => {
+    logger.error('❌ Blockchain initialization failed:', err);
+  });
 
 // ✅ Trust proxy (needed for Render)
 app.set('trust proxy', 1);
@@ -37,7 +51,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   res.header('Access-Control-Allow-Credentials', 'true');
-
+  
   if (req.method === 'OPTIONS') {
     // Respond to preflight immediately
     return res.sendStatus(204);
@@ -65,13 +79,21 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'ZeroGPool Backend API',
-    version: '1.0.0',
+    message: 'ZeroGPool Backend API with Blockchain Integration',
+    version: '2.0.0',
+    blockchain: {
+      enabled: blockchainService.isReady(),
+      network: '0G Network',
+    },
     endpoints: {
       health: '/api/health',
+      login: 'POST /api/auth/login',
       getUser: 'GET /api/user?walletAddress=<address>',
       saveUser: 'POST /api/user',
       leaderboard: 'GET /api/leaderboard',
+      blockchainSession: 'GET /api/blockchain/session/:walletAddress',
+      blockchainLoginCount: 'GET /api/blockchain/login-count/:walletAddress',
+      blockchainStats: 'GET /api/blockchain/stats',
     },
   });
 });
@@ -91,21 +113,22 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 // ✅ Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
+const gracefulShutdown = () => {
+  logger.info('🛑 Shutting down gracefully...');
   server.close(() => {
-    logger.info('HTTP server closed');
+    logger.info('✅ HTTP server closed');
     process.exit(0);
   });
-});
+  
+  // Force close after 10 seconds
+  setTimeout(() => {
+    logger.error('⚠️ Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+};
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT signal received: closing HTTP server');
-  server.close(() => {
-    logger.info('HTTP server closed');
-    process.exit(0);
-  });
-});
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 
 // ✅ Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
@@ -117,7 +140,8 @@ process.on('unhandledRejection', (err) => {
 
 // ✅ Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
-  logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+  logger.info(`🚀 Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+  logger.info(`🔗 Blockchain integration: ${blockchainService.isReady() ? 'ENABLED' : 'DISABLED'}`);
 });
 
 module.exports = app;
