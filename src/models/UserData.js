@@ -11,7 +11,7 @@ const userDataSchema = new mongoose.Schema({
   },
   playerData: {
     playerNames0: { type: String, default: '' },
-    playerNames1: { type: String, default: '' },
+    playerNames1: { type: String, default: '0g-Panda' },
     chosenAvatar0: { type: Number, default: 0 },
     chosenAvatar1: { type: Number, default: 7 },
     selectedCue0: { type: Number, default: 1 },
@@ -52,7 +52,7 @@ const userDataSchema = new mongoose.Schema({
   misc: {
     startupCounter: { type: Number, default: 0 },
     userSelControlDone: { type: Boolean, default: false },
-    adsRemoved: { type: Boolean, default: false },
+    adsRemoved: { type: Boolean, default: true },
     useAvatarSet2: { type: Boolean, default: true },
   },
 }, {
