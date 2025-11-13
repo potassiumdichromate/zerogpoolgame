@@ -94,12 +94,18 @@ app.get('/', (req, res) => {
       blockchainSession: 'GET /api/blockchain/session/:walletAddress',
       blockchainLoginCount: 'GET /api/blockchain/login-count/:walletAddress',
       blockchainStats: 'GET /api/blockchain/stats',
+      // 🔗 Referral endpoints
+      referralGenerate: 'POST /api/referral/generate',
+      referralClaim: 'POST /api/referral/claim',
     },
   });
 });
 
 // ✅ API routes
 app.use('/api', apiRoutes);
+
+// ✅ REFERRAL routes (NEW)
+app.use('/api/referral', require('./routes/referralRoutes'));
 
 // ✅ 404 handler
 app.use((req, res) => {
