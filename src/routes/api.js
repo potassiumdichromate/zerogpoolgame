@@ -13,6 +13,9 @@ const {
 const logger = require('../utils/logger');
 const blockchainService = require('../utils/blockchain');
 
+// REFERRAL CONTROLLER
+const referralController = require("../controllers/referralController");
+
 // ==================== PUBLIC ENDPOINTS ====================
 
 // POST /api/auth/login - Login and get JWT token + Record session on blockchain
@@ -31,6 +34,35 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
       logger.info(`New user created during login: ${normalizedAddress}`);
     }
 
+    // --------------------------------------
+    // 🔥 REFERRAL AUTO-CLAIM INSERTED HERE
+    // --------------------------------------
+    const refCode = req.query.ref;
+
+    if (refCode && !userData.referral?.referredBy) {
+      const inviter = await UserData.findOne({
+        "referral.referralCode": refCode,
+      });
+
+      if (inviter && inviter.walletAddress !== normalizedAddress) {
+        try {
+          // assign referral to new user
+          userData.referral = userData.referral || {};
+          userData.referral.referredBy = refCode;
+          await userData.save();
+
+          // increase inviter count
+          inviter.referral = inviter.referral || {};
+          inviter.referral.referralCount = (inviter.referral.referralCount || 0) + 1;
+          await inviter.save();
+
+          logger.info(`Referral claimed: ${normalizedAddress} referred by ${inviter.walletAddress}`);
+        } catch (err) {
+          logger.error("Referral auto-claim error:", err);
+        }
+      }
+    }
+
     // Generate JWT token
     const token = generateToken(normalizedAddress, userData._id);
 
@@ -39,18 +71,9 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
     // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain (non-blocking)
     let blockchainResult = null;
     if (blockchainService.isReady()) {
-      // Record session asynchronously - don't wait for it
       blockchainService.recordSession(normalizedAddress, userData.stats)
-        .then(result => {
-          if (result && result.success) {
-            logger.info(`Blockchain session recorded for ${normalizedAddress}: ${result.transactionHash}`);
-          }
-        })
-        .catch(error => {
-          logger.error(`Failed to record blockchain session for ${normalizedAddress}:`, error);
-        });
-      
-      // Optionally, get current login count from blockchain
+        .catch(error => logger.error(`Failed to record blockchain session for ${normalizedAddress}:`, error));
+
       try {
         const loginCount = await blockchainService.getUserLoginCount(normalizedAddress);
         if (loginCount !== null) {
@@ -78,6 +101,32 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
     next(error);
   }
 });
+
+
+// ==================== REFERRAL ROUTES ADDED ====================
+
+router.post("/referral/generate", referralController.generateReferralCode);
+
+router.post("/referral/claim", referralController.claimReferral);
+
+router.get("/referral/stats", authenticate, async (req, res) => {
+  const user = await UserData.findOne({ walletAddress: req.walletAddress })
+    .select("referral");
+
+  if (!user) {
+    return res.status(404).json({ success: false, error: "User not found" });
+  }
+
+  res.json({
+    success: true,
+    referralCode: user.referral?.referralCode || null,
+    referralCount: user.referral?.referralCount || 0,
+    referredBy: user.referral?.referredBy || null,
+  });
+});
+
+
+// ==================== PUBLIC USER ENDPOINTS ====================
 
 // GET /api/user - Get or create user data (kept for backward compatibility)
 router.get('/user', validateWalletAddress, async (req, res, next) => {
@@ -134,7 +183,7 @@ router.post('/user', validateWalletAddress, validateUserData, async (req, res, n
   }
 });
 
-// GET /api/leaderboard - Get top 100 players by total balls pocketed
+// GET /api/leaderboard
 router.get('/leaderboard', async (req, res, next) => {
   try {
     const leaderboard = await UserData
@@ -162,9 +211,10 @@ router.get('/leaderboard', async (req, res, next) => {
   }
 });
 
+
 // ==================== PROTECTED ENDPOINTS (Require JWT) ====================
 
-// GET /api/player/data - Get player data
+// GET /api/player/data
 router.get('/player/data', authenticate, async (req, res, next) => {
   try {
     const userData = await UserData.findOne({ 
@@ -187,7 +237,7 @@ router.get('/player/data', authenticate, async (req, res, next) => {
   }
 });
 
-// POST /api/player/name - Update player name (playerNames0)
+// POST /api/player/name
 router.post('/player/name', authenticate, validatePlayerName, async (req, res, next) => {
   try {
     const { playerNames0 } = req.body;
@@ -226,7 +276,7 @@ router.post('/player/name', authenticate, validatePlayerName, async (req, res, n
   }
 });
 
-// GET /api/player/stats - Get user stats with optional filter
+// GET /api/player/stats
 router.get('/player/stats', authenticate, validateStatsFilter, async (req, res, next) => {
   try {
     const { statType } = req.query;
@@ -242,7 +292,6 @@ router.get('/player/stats', authenticate, validateStatsFilter, async (req, res, 
       });
     }
 
-    // If specific stat type requested, return only that stat
     if (statType) {
       res.json({
         success: true,
@@ -251,7 +300,6 @@ router.get('/player/stats', authenticate, validateStatsFilter, async (req, res, 
         },
       });
     } else {
-      // Return all stats
       res.json({
         success: true,
         data: userData.stats,
@@ -262,9 +310,9 @@ router.get('/player/stats', authenticate, validateStatsFilter, async (req, res, 
   }
 });
 
+
 // ==================== BLOCKCHAIN ENDPOINTS ====================
 
-// GET /api/blockchain/session/:walletAddress - Get user's latest blockchain session
 router.get('/blockchain/session/:walletAddress', async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
@@ -295,7 +343,6 @@ router.get('/blockchain/session/:walletAddress', async (req, res, next) => {
   }
 });
 
-// GET /api/blockchain/login-count/:walletAddress - Get user's on-chain login count
 router.get('/blockchain/login-count/:walletAddress', async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
@@ -322,7 +369,6 @@ router.get('/blockchain/login-count/:walletAddress', async (req, res, next) => {
   }
 });
 
-// GET /api/blockchain/stats - Get blockchain contract statistics
 router.get('/blockchain/stats', async (req, res, next) => {
   try {
     if (!blockchainService.isReady()) {

@@ -9,6 +9,14 @@ const userDataSchema = new mongoose.Schema({
     lowercase: true,
     trim: true,
   },
+
+  referral: {
+  referralCode: { type: String, unique: true, sparse: true },
+  referralCount: { type: Number, default: 0 },
+  referredBy: { type: String, default: null }
+},
+
+
   playerData: {
     playerNames0: { type: String, default: '' },
     playerNames1: { type: String, default: '0g-Panda' },

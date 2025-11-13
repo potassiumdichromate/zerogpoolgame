@@ -1,4 +1,4 @@
-const Referral = require("../models/Referral");
+const UserData = require("../models/UserData");
 const crypto = require("crypto");
 const { ethers } = require("ethers");
 
@@ -7,40 +7,36 @@ function generateCode() {
   return crypto.randomBytes(4).toString("hex").toUpperCase();
 }
 
-// -----------------------------------------------------------
-// GENERATE REFERRAL CODE  (with signature verification)
-// -----------------------------------------------------------
+/* -----------------------------------------------------------
+   GENERATE REFERRAL CODE (with signature verification)
+----------------------------------------------------------- */
 exports.generateReferralCode = async (req, res) => {
   try {
-    const { walletAddress, signature } = req.body;
+    const { walletAddress, signature, nonce } = req.body;
 
-    if (!walletAddress || !signature) {
+    if (!walletAddress || !signature || !nonce) {
       return res.status(400).json({
         success: false,
-        error: "walletAddress and signature are required",
+        error: "walletAddress, signature and nonce are required",
       });
     }
 
     const normalized = walletAddress.toLowerCase();
 
-    // The message frontend signs:
+    // The message user signs
     const message = `ZeroGPool Referral Verification
 Wallet: ${walletAddress}
-Nonce: ${req.body.nonce || "MISSING_NONCE"}`;
+Nonce: ${nonce}`;
 
-    // Recover wallet from signature
+    // Recover address
     let recovered;
     try {
       recovered = ethers.verifyMessage(message, signature);
     } catch (err) {
-      console.error("Signature verify error:", err);
-      return res.status(401).json({
-        success: false,
-        error: "Invalid signature",
-      });
+      console.error("Signature verification failed:", err);
+      return res.status(401).json({ success: false, error: "Invalid signature" });
     }
 
-    // MUST match connected wallet
     if (recovered.toLowerCase() !== normalized) {
       return res.status(401).json({
         success: false,
@@ -48,29 +44,42 @@ Nonce: ${req.body.nonce || "MISSING_NONCE"}`;
       });
     }
 
-    // Check if referral already exists
-    let existing = await Referral.findOne({ walletAddress: normalized });
+    // -----------------------------
+    // Find or create user
+    // -----------------------------
+    let user = await UserData.findOne({ walletAddress: normalized });
 
-    if (existing) {
-      return res.json({
-        success: true,
-        referralCode: existing.referralCode,
-        referralLink: `https://zerogpool.xyz/?ref=${existing.referralCode}`,
+    if (!user) {
+      user = new UserData({
+        walletAddress: normalized,
+        referral: {
+          referralCode: null,
+          referralCount: 0,
+          referredBy: null,
+        },
       });
     }
 
-    // Create unique code
+    // Already has a referral code → return same
+    if (user.referral?.referralCode) {
+      return res.json({
+        success: true,
+        referralCode: user.referral.referralCode,
+        referralLink: `https://zerogpool.xyz/?ref=${user.referral.referralCode}`,
+      });
+    }
+
+    // -----------------------------
+    // Generate UNIQUE referral code
+    // -----------------------------
     let code = generateCode();
-    while (await Referral.findOne({ referralCode: code })) {
+    while (await UserData.findOne({ "referral.referralCode": code })) {
       code = generateCode();
     }
 
-    const newRef = new Referral({
-      walletAddress: normalized,
-      referralCode: code,
-    });
-
-    await newRef.save();
+    // Save referral code to this user
+    user.referral.referralCode = code;
+    await user.save();
 
     return res.json({
       success: true,
@@ -79,13 +88,13 @@ Nonce: ${req.body.nonce || "MISSING_NONCE"}`;
     });
   } catch (error) {
     console.error("Referral Generate Error:", error);
-    res.status(500).json({ success: false, error: "Internal server error" });
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
-// -----------------------------------------------------------
-// CLAIM REFERRAL
-// -----------------------------------------------------------
+/* -----------------------------------------------------------
+   CLAIM REFERRAL (when new user signs up)
+----------------------------------------------------------- */
 exports.claimReferral = async (req, res) => {
   try {
     const { walletAddress, referralCode } = req.body;
@@ -93,49 +102,66 @@ exports.claimReferral = async (req, res) => {
     if (!walletAddress || !referralCode) {
       return res.status(400).json({
         success: false,
-        error: "walletAddress and referralCode required",
+        error: "walletAddress and referralCode are required",
       });
     }
 
     const normalizedWallet = walletAddress.toLowerCase();
     const code = referralCode.toUpperCase();
 
-    const ref = await Referral.findOne({ referralCode: code });
+    const inviter = await UserData.findOne({
+      "referral.referralCode": code,
+    });
 
-    if (!ref) {
-      return res.status(404).json({ success: false, error: "Invalid referral code" });
+    if (!inviter) {
+      return res.status(404).json({
+        success: false,
+        error: "Invalid referral code",
+      });
     }
 
-    // Prevent self-referring
-    if (ref.walletAddress === normalizedWallet) {
+    // Prevent self-referral
+    if (inviter.walletAddress === normalizedWallet) {
       return res.status(400).json({
         success: false,
         error: "You cannot use your own referral code",
       });
     }
 
-    // Already used referral?
-    if (ref.referredUsers.includes(normalizedWallet)) {
+    // Now check this new user
+    let newUser = await UserData.findOne({ walletAddress: normalizedWallet });
+
+    if (!newUser) {
+      newUser = new UserData({ walletAddress: normalizedWallet });
+    }
+
+    // Already used referral before?
+    if (newUser.referral?.referredBy) {
       return res.json({
         success: true,
-        message: "Referral already counted",
-        referralCount: ref.referralCount,
+        message: "Referral already claimed",
+        referralCount: inviter.referral.referralCount,
       });
     }
 
-    // Update stats
-    ref.referredUsers.push(normalizedWallet);
-    ref.referralCount += 1;
+    // Mark this user as referred
+    newUser.referral = {
+      ...newUser.referral,
+      referredBy: code,
+    };
+    await newUser.save();
 
-    await ref.save();
+    // Increase inviter referral count
+    inviter.referral.referralCount += 1;
+    await inviter.save();
 
     return res.json({
       success: true,
-      message: "Referral claimed successfully",
-      referralCount: ref.referralCount,
+      message: "Referral successfully claimed",
+      referralCount: inviter.referral.referralCount,
     });
   } catch (error) {
     console.error("Referral Claim Error:", error);
-    res.status(500).json({ success: false, error: "Internal server error" });
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
