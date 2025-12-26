@@ -102,6 +102,89 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
   }
 });
 
+router.post('/auth/iframe-login', authenticate, async (req, res, next) => {
+  try {
+    const walletAddress = req.walletAddress;
+    const normalizedAddress = walletAddress.toLowerCase();
+
+    // Find or create user
+    let userData = await UserData.findOne({ walletAddress: normalizedAddress });
+
+    if (!userData) {
+      // Create new user if doesn't exist
+      userData = new UserData({ walletAddress: normalizedAddress });
+      await userData.save();
+      logger.info(`New user created during login: ${normalizedAddress}`);
+    }
+
+    // --------------------------------------
+    // 🔥 REFERRAL AUTO-CLAIM INSERTED HERE
+    // --------------------------------------
+    const refCode = req.query.ref;
+
+    if (refCode && !userData.referral?.referredBy) {
+      const inviter = await UserData.findOne({
+        "referral.referralCode": refCode,
+      });
+
+      if (inviter && inviter.walletAddress !== normalizedAddress) {
+        try {
+          // assign referral to new user
+          userData.referral = userData.referral || {};
+          userData.referral.referredBy = refCode;
+          await userData.save();
+
+          // increase inviter count
+          inviter.referral = inviter.referral || {};
+          inviter.referral.referralCount = (inviter.referral.referralCount || 0) + 1;
+          await inviter.save();
+
+          logger.info(`Referral claimed: ${normalizedAddress} referred by ${inviter.walletAddress}`);
+        } catch (err) {
+          logger.error("Referral auto-claim error:", err);
+        }
+      }
+    }
+
+    // Generate JWT token
+    const token = generateToken(normalizedAddress, userData._id);
+
+    logger.info(`User logged in: ${normalizedAddress}`);
+
+    // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain (non-blocking)
+    let blockchainResult = null;
+    if (blockchainService.isReady()) {
+      blockchainService.recordSession(normalizedAddress, userData.stats)
+        .catch(error => logger.error(`Failed to record blockchain session for ${normalizedAddress}:`, error));
+
+      try {
+        const loginCount = await blockchainService.getUserLoginCount(normalizedAddress);
+        if (loginCount !== null) {
+          blockchainResult = {
+            onChainLoginCount: loginCount,
+            blockchainEnabled: true,
+          };
+        }
+      } catch (error) {
+        logger.error('Failed to get blockchain login count:', error);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      data: {
+        token,
+        walletAddress: normalizedAddress,
+        expiresIn: process.env.JWT_EXPIRES_IN || '30d',
+        ...(blockchainResult && { blockchain: blockchainResult }),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 
 // ==================== REFERRAL ROUTES ADDED ====================
 

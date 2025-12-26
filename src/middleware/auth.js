@@ -24,8 +24,14 @@ const authenticate = async (req, res, next) => {
     }
 
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
     
+    if(req.body.source === "browser"){
+      decoded = jwt.verify(token, process.env.BROWSER_JWT_SECRET);
+    } else {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    }
+
     // Add wallet address to request
     req.walletAddress = decoded.walletAddress.toLowerCase();
     req.userId = decoded.userId;
