@@ -1,4 +1,5 @@
 const Joi = require('joi');
+const jwt = require('jsonwebtoken');
 
 const walletAddressSchema = Joi.string()
   .pattern(/^0x[a-fA-F0-9]{40}$/)
@@ -120,13 +121,26 @@ const validateUserData = (req, res, next) => {
 };
 
 const validateLogin = (req, res, next) => {
-  const { error } = loginSchema.validate(req.body);
   
-  if (error) {
-    return res.status(400).json({
-      success: false,
-      error: error.details[0].message,
-    });
+  const source = req.body.source;
+  if(source && source === "browser"){
+    const token = req.body.token;
+    if(token){
+      const decoded = jwt.verify(token, process.env.BROWSER_JWT_SECRET);
+      req.body.walletAddress = decoded.walletAddress.toLowerCase();
+      console.log("source::", source, " token::", token)
+      // next();
+    }
+  } else {  
+    const { error } = loginSchema.validate(req.body);
+    
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        error: error.details[0].message,
+      });
+    }
+
   }
   
   next();
