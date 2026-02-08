@@ -68,22 +68,44 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
 
     logger.info(`User logged in: ${normalizedAddress}`);
 
-    // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain (non-blocking)
+    // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain (UPDATED - NOW AWAITS!)
     let blockchainResult = null;
     if (blockchainService.isReady()) {
-      blockchainService.recordSession(normalizedAddress, userData.stats)
-        .catch(error => logger.error(`Failed to record blockchain session for ${normalizedAddress}:`, error));
-
       try {
-        const loginCount = await blockchainService.getUserLoginCount(normalizedAddress);
-        if (loginCount !== null) {
+        // AWAIT the blockchain transaction to get the txHash
+        const sessionResult = await blockchainService.recordSession(normalizedAddress, userData.stats);
+        
+        if (sessionResult && sessionResult.success) {
+          logger.info(`✅ Blockchain session recorded: ${sessionResult.transactionHash}`);
+          
           blockchainResult = {
-            onChainLoginCount: loginCount,
+            success: true,
+            txHash: sessionResult.transactionHash,
+            blockNumber: sessionResult.blockNumber,
+            gasUsed: sessionResult.gasUsed,
+            blockchainEnabled: true,
+          };
+        } else {
+          logger.warn(`⚠️ Blockchain session recording failed for ${normalizedAddress}`);
+          blockchainResult = {
+            success: false,
+            error: sessionResult?.error || 'Unknown error',
             blockchainEnabled: true,
           };
         }
+
+        // Also get login count
+        const loginCount = await blockchainService.getUserLoginCount(normalizedAddress);
+        if (loginCount !== null) {
+          blockchainResult.onChainLoginCount = loginCount;
+        }
       } catch (error) {
-        logger.error('Failed to get blockchain login count:', error);
+        logger.error(`❌ Failed to record blockchain session for ${normalizedAddress}:`, error);
+        blockchainResult = {
+          success: false,
+          error: error.message,
+          blockchainEnabled: true,
+        };
       }
     }
 
@@ -94,8 +116,8 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
         token,
         walletAddress: normalizedAddress,
         expiresIn: process.env.JWT_EXPIRES_IN || '30d',
-        ...(blockchainResult && { blockchain: blockchainResult }),
       },
+      blockchain: blockchainResult, // NOW AT ROOT LEVEL WITH TX HASH!
     });
   } catch (error) {
     next(error);
@@ -174,9 +196,37 @@ router.post('/user', validateWalletAddress, validateUserData, async (req, res, n
 
     logger.info(`User data saved: ${normalizedAddress}`);
 
+    // NEW: Record blockchain session when user data is saved
+    let blockchainResult = null;
+    if (blockchainService.isReady() && updatedUser.stats) {
+      try {
+        const sessionResult = await blockchainService.recordSession(
+          normalizedAddress, 
+          updatedUser.stats
+        );
+        
+        if (sessionResult && sessionResult.success) {
+          blockchainResult = {
+            success: true,
+            txHash: sessionResult.transactionHash,
+            blockNumber: sessionResult.blockNumber,
+            gasUsed: sessionResult.gasUsed,
+          };
+          logger.info(`✅ User data save - Blockchain session: ${sessionResult.transactionHash}`);
+        }
+      } catch (error) {
+        logger.error('Blockchain recording error during user save:', error);
+        blockchainResult = {
+          success: false,
+          error: error.message,
+        };
+      }
+    }
+
     res.json({
       success: true,
       data: updatedUser,
+      blockchain: blockchainResult, // NEW: Include blockchain result
     });
   } catch (error) {
     next(error);
