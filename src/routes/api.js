@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const UserData = require('../models/UserData');
 const authenticate = require('../middleware/auth');
+const { decodeBrowserJwtOptional } = require('../middleware/browserJwt');
 const { generateToken } = require('../utils/jwt');
 const {
   validateWalletAddress,
@@ -19,6 +20,7 @@ const referralController = require("../controllers/referralController");
 // ==================== PUBLIC ENDPOINTS ====================
 
 // POST /api/auth/login - Login and get JWT token + Record session on blockchain
+// POST /api/v2/login - V2 Login with JWT support (autologin)
 router.post('/auth/login', validateLogin, async (req, res, next) => {
   try {
     const { walletAddress } = req.body;
@@ -118,6 +120,89 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
         expiresIn: process.env.JWT_EXPIRES_IN || '30d',
       },
       blockchain: blockchainResult, // NOW AT ROOT LEVEL WITH TX HASH!
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// V2 Login endpoint with JWT support for autologin
+router.post('/v2/login', decodeBrowserJwtOptional, async (req, res, next) => {
+  try {
+    let walletAddress = req.body?.walletAddress;
+    const jwt = req.body?.jwt;
+    const source = req.body?.source;
+
+    // Use wallet from JWT if available, otherwise use provided wallet address
+    if (req.walletFromJwt) {
+      walletAddress = req.walletFromJwt;
+    }
+
+    if (!walletAddress) {
+      return res.status(400).json({
+        success: false,
+        message: 'walletAddress is required',
+      });
+    }
+
+    const normalizedAddress = walletAddress.toLowerCase();
+
+    // Find or create user
+    let userData = await UserData.findOne({ walletAddress: normalizedAddress });
+
+    if (!userData) {
+      // Create new user if doesn't exist
+      userData = new UserData({ walletAddress: normalizedAddress });
+      await userData.save();
+      logger.info(`New user created during v2 login: ${normalizedAddress}`);
+    }
+
+    // Generate JWT token
+    const token = generateToken(normalizedAddress, userData._id);
+
+    logger.info(`User logged in via v2: ${normalizedAddress} (source: ${source || 'unknown'})`);
+
+    // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain
+    let blockchainResult = null;
+    if (blockchainService.isReady()) {
+      try {
+        const sessionResult = await blockchainService.recordSession(normalizedAddress, userData.stats);
+        
+        if (sessionResult && sessionResult.success) {
+          logger.info(`✅ Blockchain session recorded: ${sessionResult.transactionHash}`);
+          
+          blockchainResult = {
+            success: true,
+            txHash: sessionResult.transactionHash,
+            blockNumber: sessionResult.blockNumber,
+            gasUsed: sessionResult.gasUsed,
+            blockchainEnabled: true,
+          };
+        }
+
+        const loginCount = await blockchainService.getUserLoginCount(normalizedAddress);
+        if (loginCount !== null) {
+          blockchainResult.onChainLoginCount = loginCount;
+        }
+      } catch (error) {
+        logger.error(`❌ Failed to record blockchain session for ${normalizedAddress}:`, error);
+        blockchainResult = {
+          success: false,
+          error: error.message,
+          blockchainEnabled: true,
+        };
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      data: {
+        token,
+        walletAddress: normalizedAddress,
+        expiresIn: process.env.JWT_EXPIRES_IN || '30d',
+      },
+      blockchain: blockchainResult,
     });
   } catch (error) {
     next(error);
