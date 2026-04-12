@@ -22,7 +22,20 @@ const verifyToken = (token) => {
   }
 };
 
+const verifyBrowserToken = (token) => {
+  try {
+    return jwt.verify(
+      token,
+      process.env.BROWSER_JWT_SECRET || 'dev-secret-change-me',
+      { algorithms: ['HS256'] }
+    );
+  } catch (error) {
+    throw error;
+  }
+};
+
 module.exports = {
   generateToken,
   verifyToken,
+  verifyBrowserToken,
 };
