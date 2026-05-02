@@ -7,6 +7,7 @@ const apiRoutes = require('./routes/api');
 const errorHandler = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
 const blockchainService = require('./utils/blockchain'); // 🔗 NEW
+const zerogDAService = require('./services/zerogDAService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,6 +27,10 @@ blockchainService.initialize()
   .catch(err => {
     logger.error('❌ Blockchain initialization failed:', err);
   });
+
+zerogDAService.healthCheck().then((s) => {
+  logger.info(`[0g-da] gateway ${s.gateway} online=${s.online}`);
+});
 
 // ✅ Trust proxy (needed for Render)
 app.set('trust proxy', 1);
@@ -94,6 +99,10 @@ app.get('/', (req, res) => {
       blockchainSession: 'GET /api/blockchain/session/:walletAddress',
       blockchainLoginCount: 'GET /api/blockchain/login-count/:walletAddress',
       blockchainStats: 'GET /api/blockchain/stats',
+      daSnapshot: 'GET /api/da/snapshot?wallet=<address>',
+      daStatus: 'GET /api/da/status?wallet=<address>',
+      daRetrieve: 'GET /api/da/retrieve?wallet=<address>',
+      daHealth: 'GET /api/da/health',
       // 🔗 Referral endpoints
       referralGenerate: 'POST /api/referral/generate',
       referralClaim: 'POST /api/referral/claim',

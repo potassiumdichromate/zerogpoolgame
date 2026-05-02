@@ -63,6 +63,16 @@ const userDataSchema = new mongoose.Schema({
     adsRemoved: { type: Boolean, default: true },
     useAvatarSet2: { type: Boolean, default: true },
   },
+
+  /** Latest 0G DA login-session submission (gateway eventId + status hints) */
+  daSnapshot: {
+    eventId: { type: String, default: null },
+    daStatus: { type: String, default: null },
+    daReference: { type: mongoose.Schema.Types.Mixed, default: null },
+    daBlobInfo: { type: mongoose.Schema.Types.Mixed, default: null },
+    snapshotAt: { type: Date, default: null },
+    trigger: { type: String, default: null },
+  },
 }, {
   timestamps: true,
   versionKey: false,

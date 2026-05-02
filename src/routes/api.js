@@ -13,6 +13,33 @@ const {
 } = require('../middleware/validation');
 const logger = require('../utils/logger');
 const blockchainService = require('../utils/blockchain');
+const zerogDAService = require('../services/zerogDAService');
+
+// 0G DA: fire-and-forget after login — never blocks the API (Highway Hustle pattern).
+const queueLoginSessionDA = (trigger, userId, walletAddress, userDoc) => {
+  setImmediate(async () => {
+    try {
+      const result = await zerogDAService.submitPlayerEvent(
+        'session.login',
+        walletAddress,
+        userDoc
+      );
+      if (result?.eventId && userId) {
+        await UserData.findByIdAndUpdate(userId, {
+          daSnapshot: {
+            eventId: result.eventId,
+            daStatus: 'submitted',
+            snapshotAt: new Date(),
+            trigger,
+          },
+        });
+        logger.info(`[0g-da] eventId ${result.eventId} saved for ${walletAddress} (${trigger})`);
+      }
+    } catch (err) {
+      logger.warn(`[0g-da] Background login session error: ${err.message}`);
+    }
+  });
+};
 
 // REFERRAL CONTROLLER
 const referralController = require("../controllers/referralController");
@@ -111,6 +138,8 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
       }
     }
 
+    queueLoginSessionDA('login.auth', userData._id, normalizedAddress, userData);
+
     res.json({
       success: true,
       message: 'Login successful',
@@ -193,6 +222,8 @@ router.post('/v2/login', decodeBrowserJwtOptional, async (req, res, next) => {
         };
       }
     }
+
+    queueLoginSessionDA('login.v2', userData._id, normalizedAddress, userData);
 
     res.json({
       success: true,
@@ -519,6 +550,138 @@ router.get('/blockchain/stats', async (req, res, next) => {
       success: true,
       data: stats || { totalUsers: 0, totalSessions: 0 },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==================== 0G DA (login session blobs) ====================
+
+router.get('/da/snapshot', async (req, res, next) => {
+  try {
+    const wallet = req.query.wallet;
+    if (!wallet || typeof wallet !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: "Missing 'wallet' query parameter",
+      });
+    }
+    const normalizedAddress = wallet.toLowerCase().trim();
+    const user = await UserData.findOne({ walletAddress: normalizedAddress }).select(
+      'daSnapshot walletAddress'
+    );
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const snap = user.daSnapshot;
+    if (!snap?.eventId) {
+      return res.json({
+        success: true,
+        snapshot: null,
+        message: 'No DA event submitted yet for this wallet',
+      });
+    }
+
+    res.json({
+      success: true,
+      snapshot: {
+        eventId: snap.eventId,
+        daStatus: snap.daStatus,
+        daReference: snap.daReference || null,
+        daBlobInfo: snap.daBlobInfo || null,
+        snapshotAt: snap.snapshotAt,
+        trigger: snap.trigger,
+        gatewayStatusUrl: `${zerogDAService.getGatewayBaseUrl()}/v1/da/status/${snap.eventId}`,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/da/status', async (req, res, next) => {
+  try {
+    const wallet = req.query.wallet;
+    if (!wallet || typeof wallet !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: "Missing 'wallet' query parameter",
+      });
+    }
+    const normalizedAddress = wallet.toLowerCase().trim();
+    const user = await UserData.findOne({ walletAddress: normalizedAddress }).select(
+      'daSnapshot'
+    );
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const eventId = user.daSnapshot?.eventId;
+    if (!eventId) {
+      return res.json({
+        success: true,
+        found: false,
+        message: 'No DA event submitted yet for this wallet',
+      });
+    }
+
+    const status = await zerogDAService.getEventStatus(eventId);
+    const st = String(status?.daStatus || '').toLowerCase();
+    if (
+      status?.daBlobInfo &&
+      (st === 'confirmed' || st === 'finalized')
+    ) {
+      await UserData.findByIdAndUpdate(user._id, {
+        'daSnapshot.daStatus': status.daStatus,
+        'daSnapshot.daReference': status.daReference,
+        'daSnapshot.daBlobInfo': status.daBlobInfo,
+      });
+    }
+
+    res.json({ success: true, eventId, ...status });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/da/retrieve', async (req, res, next) => {
+  try {
+    const wallet = req.query.wallet;
+    if (!wallet || typeof wallet !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: "Missing 'wallet' query parameter",
+      });
+    }
+    const normalizedAddress = wallet.toLowerCase().trim();
+    const user = await UserData.findOne({ walletAddress: normalizedAddress }).select(
+      'daSnapshot'
+    );
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const eventId = user.daSnapshot?.eventId;
+    if (!eventId) {
+      return res.json({
+        success: true,
+        retrieved: false,
+        message: 'No DA event for this wallet',
+      });
+    }
+
+    const result = await zerogDAService.retrievePlayerEvent(eventId);
+    res.json({ success: true, eventId, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/da/health', async (req, res, next) => {
+  try {
+    const da = await zerogDAService.healthCheck();
+    res.json({ success: true, da });
   } catch (error) {
     next(error);
   }
