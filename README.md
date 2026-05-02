@@ -2,6 +2,8 @@
 
 Production-ready backend for ZerpGPool game with MongoDB integration.
 
+**0G integration (DA gateway + optional EVM sessions):** see **[0G_INTEGRATION.md](./0G_INTEGRATION.md)** for architecture, env vars, routes, data flow, and operational notes.
+
 ## Features
 
 - ✅ RESTful API with 3 endpoints
