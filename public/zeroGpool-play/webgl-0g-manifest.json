@@ -1,0 +1,23 @@
+{
+  "indexerUrl": "https://indexer-storage-turbo.0g.ai",
+  "entries": [
+    { "relative_path": "Build/Game.data", "root_hash": "0x34a0af117947791cefc464e6a97d55340362080a0292c4f66730e01b6ed6a230", "size_bytes": 24680116 },
+    { "relative_path": "Build/Game.framework.js", "root_hash": "0x6ac4084dba37450a65b317622c6a229b92106da17010605c4ffa826f0f29a928", "size_bytes": 466970 },
+    { "relative_path": "Build/Game.loader.js", "root_hash": "0x16858226d6522fbc8f5304fe3918d66b716f724327fc0b47b7d5d659263ae1e6", "size_bytes": 26416 },
+    { "relative_path": "Build/Game.wasm", "root_hash": "0xc16fdf5d9a416327c035b1f3912f6b3ca2f7ea57716c9e73f7096770cb02d6f0", "size_bytes": 44762248 },
+    { "relative_path": "StreamingAssets/UnityServicesProjectConfiguration.json", "root_hash": "0xe56dc247cb99818fc455129342edb0403804caa90d3711718b92f0d06a0edc7d", "size_bytes": 1410 },
+    { "relative_path": "ServiceWorker.js", "root_hash": "0x33066b9c2bfd6c1dd9b130687f88b1989c0edf6b9e912fe9f250145aab5793a0", "size_bytes": 1034 },
+    { "relative_path": "manifest.webmanifest", "root_hash": "0xe8729520df2e32296cdbfbdbf75fa1d930b0e58712627887b092be62499171aa", "size_bytes": 370 },
+    { "relative_path": "index.html", "root_hash": "0x1b390cbe9a1825f56c7b0d6df6f6625b0556a937c7f7bae117a2a05e53c3459c", "size_bytes": 27257 },
+    { "relative_path": "TemplateData/favicon.ico", "root_hash": "0x72d356f4f58190e57043e3a2b1e62606328a7ea53651884e1b9c6d741e3758a7", "size_bytes": 2305 },
+    { "relative_path": "TemplateData/icons/unity-logo-dark.png", "root_hash": "0x6f24c0373c7876f961dd8492aa40b574cea1805e5816a66b617d06529544f6cb", "size_bytes": 5615 },
+    { "relative_path": "TemplateData/icons/unity-logo-light.png", "root_hash": "0x6c5356958000439cff6386b4cd858011b95b2ceb901833f8f4024b1ef74ea57c", "size_bytes": 5589 },
+    { "relative_path": "TemplateData/progress-bar-empty-dark.png", "root_hash": "0x4a4e9b1d7d1eaeed8e8db1e032b9dae177b289ab748fd2b65b2601db790f9e08", "size_bytes": 96 },
+    { "relative_path": "TemplateData/progress-bar-empty-light.png", "root_hash": "0x1135c8fb472a7b2b3376ce18f3f2e11162c4998f463163193234fe59016c7700", "size_bytes": 109 },
+    { "relative_path": "TemplateData/progress-bar-full-dark.png", "root_hash": "0x353d8740979c6909b307b8ec57e41999d279e61e294b1eadb1090154aa61ac9b", "size_bytes": 74 },
+    { "relative_path": "TemplateData/progress-bar-full-light.png", "root_hash": "0xb6623764fc1ce622a121eefd1664acf6276a6c91a0d54865b35020f07de5098c", "size_bytes": 84 },
+    { "relative_path": "TemplateData/style.css", "root_hash": "0x44849af939a7dbdb03f55ae0780db20c5cca290ff78d485bb1ec31c1ce396fb5", "size_bytes": 823 },
+    { "relative_path": "TemplateData/unity-logo-dark.png", "root_hash": "0xffe2cf7d95dd19a5a7e87235f73fae0be9ce574b01bde3fa0846748bbc957b6a", "size_bytes": 3042 },
+    { "relative_path": "TemplateData/unity-logo-light.png", "root_hash": "0x4904934cb06ce4b0db75d85e58aace40e941f158b33e19ea5325a12f02de250c", "size_bytes": 3077 }
+  ]
+}

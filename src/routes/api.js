@@ -10,33 +10,38 @@ const {
   validateLogin,
   validatePlayerName,
   validateStatsFilter,
+  validateLeaderboardAiCommentQuery,
 } = require('../middleware/validation');
 const logger = require('../utils/logger');
 const blockchainService = require('../utils/blockchain');
 const zerogDAService = require('../services/zerogDAService');
+const { generatePoolLeaderboardComment } = require('../services/aiPoolCommentService');
 
-// 0G DA: fire-and-forget after login — never blocks the API (Highway Hustle pattern).
-const queueLoginSessionDA = (trigger, userId, walletAddress, userDoc) => {
+router.use('/game', require('./gameWebglManifest'));
+
+// 0G DA: fire-and-forget — never blocks the API response.
+// submitFn must return Promise<{ eventId } | null>
+const queueDA = (trigger, eventType, userId, walletAddress, submitFn) => {
   setImmediate(async () => {
     try {
-      const result = await zerogDAService.submitPlayerEvent(
-        'session.login',
-        walletAddress,
-        userDoc
-      );
-      if (result?.eventId && userId) {
+      const result = await submitFn();
+      if (!result?.eventId) return;
+      const entry = {
+        eventId:     result.eventId,
+        eventType,
+        daStatus:    'submitted',
+        submittedAt: new Date(),
+        trigger,
+      };
+      if (userId) {
         await UserData.findByIdAndUpdate(userId, {
-          daSnapshot: {
-            eventId: result.eventId,
-            daStatus: 'submitted',
-            snapshotAt: new Date(),
-            trigger,
-          },
+          $set:  { daSnapshot: { ...entry, snapshotAt: new Date() } },
+          $push: { daEvents: { $each: [entry], $slice: -50 } },
         });
-        logger.info(`[0g-da] eventId ${result.eventId} saved for ${walletAddress} (${trigger})`);
       }
+      logger.info(`[0g-da] queued | event=${eventType} trigger=${trigger} wallet=${walletAddress} eventId=${result.eventId}`);
     } catch (err) {
-      logger.warn(`[0g-da] Background login session error: ${err.message}`);
+      logger.warn(`[0g-da] background error | trigger=${trigger}: ${err.message}`);
     }
   });
 };
@@ -138,7 +143,8 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
       }
     }
 
-    queueLoginSessionDA('login.auth', userData._id, normalizedAddress, userData);
+    queueDA('login.auth', 'session.login', userData._id, normalizedAddress,
+      () => zerogDAService.submitLoginEvent(normalizedAddress, userData));
 
     res.json({
       success: true,
@@ -223,7 +229,8 @@ router.post('/v2/login', decodeBrowserJwtOptional, async (req, res, next) => {
       }
     }
 
-    queueLoginSessionDA('login.v2', userData._id, normalizedAddress, userData);
+    queueDA('login.v2', 'session.login', userData._id, normalizedAddress,
+      () => zerogDAService.submitLoginEvent(normalizedAddress, userData));
 
     res.json({
       success: true,
@@ -339,10 +346,13 @@ router.post('/user', validateWalletAddress, validateUserData, async (req, res, n
       }
     }
 
+    queueDA('user.save', 'stats.update', updatedUser._id, normalizedAddress,
+      () => zerogDAService.submitStatsUpdate(normalizedAddress, updatedUser));
+
     res.json({
       success: true,
       data: updatedUser,
-      blockchain: blockchainResult, // NEW: Include blockchain result
+      blockchain: blockchainResult,
     });
   } catch (error) {
     next(error);
@@ -376,6 +386,60 @@ router.get('/leaderboard', async (req, res, next) => {
     next(error);
   }
 });
+
+// GET /api/leaderboard/ai-comment?wallet=0x…
+// 0G Compute (primary) + Cloudflare Workers AI fallback — same pattern as Highway Hustle.
+router.get(
+  '/leaderboard/ai-comment',
+  validateLeaderboardAiCommentQuery,
+  async (req, res, next) => {
+    try {
+      const normalizedAddress = req.query.wallet.toLowerCase().trim();
+
+      const currentUser = await UserData.findOne({
+        walletAddress: normalizedAddress,
+      });
+      if (!currentUser) {
+        return res.status(404).json({
+          success: false,
+          error: 'Player not found for this wallet',
+        });
+      }
+
+      const [topUser] = await UserData.find()
+        .sort({ 'stats.totalBallsPocketed': -1 })
+        .limit(1);
+
+      if (!topUser) {
+        return res.json({
+          success: true,
+          comment: null,
+          _meta: { source: null, reason: 'no_players' },
+        });
+      }
+
+      const { comment, inferenceSource } = await generatePoolLeaderboardComment({
+        currentUserDoc: currentUser,
+        topUserDoc: topUser,
+      });
+
+      res.json({
+        success: true,
+        comment,
+        _meta: {
+          source: inferenceSource ?? null,
+        },
+      });
+    } catch (error) {
+      logger.error('Leaderboard AI comment error:', error);
+      res.json({
+        success: true,
+        comment: null,
+        _meta: { source: null },
+      });
+    }
+  },
+);
 
 
 // ==================== PROTECTED ENDPOINTS (Require JWT) ====================
@@ -429,6 +493,9 @@ router.post('/player/name', authenticate, validatePlayerName, async (req, res, n
     }
 
     logger.info(`Player name updated for ${req.walletAddress}: ${playerNames0}`);
+
+    queueDA('player.name', 'player.name', updatedUser._id, req.walletAddress,
+      () => zerogDAService.submitNameUpdate(req.walletAddress, playerNames0));
 
     res.json({
       success: true,
@@ -568,7 +635,7 @@ router.get('/da/snapshot', async (req, res, next) => {
     }
     const normalizedAddress = wallet.toLowerCase().trim();
     const user = await UserData.findOne({ walletAddress: normalizedAddress }).select(
-      'daSnapshot walletAddress'
+      'daSnapshot daEvents walletAddress'
     );
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found' });
@@ -586,14 +653,23 @@ router.get('/da/snapshot', async (req, res, next) => {
     res.json({
       success: true,
       snapshot: {
-        eventId: snap.eventId,
-        daStatus: snap.daStatus,
-        daReference: snap.daReference || null,
-        daBlobInfo: snap.daBlobInfo || null,
-        snapshotAt: snap.snapshotAt,
-        trigger: snap.trigger,
+        eventId:          snap.eventId,
+        eventType:        snap.eventType || null,
+        daStatus:         snap.daStatus,
+        daReference:      snap.daReference || null,
+        daBlobInfo:       snap.daBlobInfo || null,
+        snapshotAt:       snap.snapshotAt,
+        trigger:          snap.trigger,
         gatewayStatusUrl: `${zerogDAService.getGatewayBaseUrl()}/v1/da/status/${snap.eventId}`,
       },
+      history: (user.daEvents || []).slice().reverse().map((e) => ({
+        eventId:     e.eventId,
+        eventType:   e.eventType,
+        daStatus:    e.daStatus,
+        submittedAt: e.submittedAt,
+        trigger:     e.trigger,
+        statusUrl:   `${zerogDAService.getGatewayBaseUrl()}/v1/da/status/${e.eventId}`,
+      })),
     });
   } catch (error) {
     next(error);
@@ -689,12 +765,23 @@ router.get('/da/health', async (req, res, next) => {
 
 // Health check endpoint
 router.get('/health', (req, res) => {
+  const zgKey =
+    process.env.ZEROG_API_KEY ||
+    process.env.ZERO_G_API_KEY ||
+    process.env.ZEROG_COMPUTE_API_KEY;
   res.json({
     success: true,
     status: 'OK',
     timestamp: new Date().toISOString(),
     blockchain: {
       enabled: blockchainService.isReady(),
+    },
+    zerog: {
+      daEnabled: process.env.ZEROG_DA_ENABLED !== 'false',
+      computeConfigured: Boolean(zgKey),
+      cloudflareFallbackConfigured: Boolean(
+        process.env.CF_ACCOUNT_ID && process.env.CF_API_TOKEN,
+      ),
     },
   });
 });

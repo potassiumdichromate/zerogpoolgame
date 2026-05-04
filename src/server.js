@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
 const compression = require('compression');
@@ -35,17 +36,29 @@ zerogDAService.healthCheck().then((s) => {
 // ✅ Trust proxy (needed for Render)
 app.set('trust proxy', 1);
 
-// ✅ Security middleware
-app.use(helmet());
+// ✅ Security middleware — must allow the React app to iframe `/zeroGpool-play/` (different port = different origin)
+// Unity WebGL breaks under Helmet's default CSP (dynamic loader + WASM); tightening script-src
+// still leaves edge cases. Ship no CSP from Node for this API — embed protection uses CORS + auth instead.
+app.use(
+  helmet({
+    frameguard: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    contentSecurityPolicy: false,
+  }),
+);
+
+// Do not send any CSP on `/zeroGpool-play` — Unity WebGL + dynamic script tags need an unrestricted document.
+// (frame-ancestors-only CSP still confused Chrome in testing.) Iframe parents: rely on `frameguard: false` above.
 
 // ✅ Global CORS Fix (handles preflight first)
 const allowedOrigins = [
   'https://zerogpool.xyz',
   'https://zerogpool-frontend.vercel.app',
   'https://zerogpoolgame.onrender.com',
-  'https://pub-c57fda34f99145fc8d97b0a6b6faa237.r2.dev', // Unity WebGL Cloudflare R2
   'http://localhost:3000',
+  'http://127.0.0.1:3000',
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
 ];
 
 app.use((req, res, next) => {
@@ -85,7 +98,7 @@ app.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'ZeroGPool Backend API with Blockchain Integration',
-    version: '2.0.0',
+    version: '2.1.0',
     blockchain: {
       enabled: blockchainService.isReady(),
       network: '0G Network',
@@ -96,6 +109,8 @@ app.get('/', (req, res) => {
       getUser: 'GET /api/user?walletAddress=<address>',
       saveUser: 'POST /api/user',
       leaderboard: 'GET /api/leaderboard',
+      leaderboardAiComment:
+        'GET /api/leaderboard/ai-comment?wallet=<0x-address> (0G Compute + CF fallback)',
       blockchainSession: 'GET /api/blockchain/session/:walletAddress',
       blockchainLoginCount: 'GET /api/blockchain/login-count/:walletAddress',
       blockchainStats: 'GET /api/blockchain/stats',
@@ -103,12 +118,24 @@ app.get('/', (req, res) => {
       daStatus: 'GET /api/da/status?wallet=<address>',
       daRetrieve: 'GET /api/da/retrieve?wallet=<address>',
       daHealth: 'GET /api/da/health',
+      webglManifest:
+        'GET /api/game/webgl-manifest (full manifest + CDN; JSON-RPC probes unless ?probe=0)',
+      storageIndexerHealth:
+        'GET /api/game/storage-indexer-health (compact indexer + manifest meta, no entries body; Cache-Control: no-store)',
       // 🔗 Referral endpoints
       referralGenerate: 'POST /api/referral/generate',
       referralClaim: 'POST /api/referral/claim',
+      webglPlay: 'GET /zeroGpool-play/ (Unity WebGL — static files under public/zeroGpool-play/)',
     },
   });
 });
+
+// ✅ Static host: Unity WebGL (manifest + bootstrap + build binaries under public/zeroGpool-play/)
+// __dirname is `src/` — public assets live at project root `public/`, not `src/public/`.
+app.use(
+  '/zeroGpool-play',
+  express.static(path.join(__dirname, '..', 'public', 'zeroGpool-play')),
+);
 
 // ✅ API routes
 app.use('/api', apiRoutes);

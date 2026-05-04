@@ -1,0 +1,31 @@
+{
+  "streaming_assets": [
+    {
+      "relative_path": "StreamingAssets/UnityServicesProjectConfiguration.json",
+      "root_hash": "0xe56dc247cb99818fc455129342edb0403804caa90d3711718b92f0d06a0edc7d",
+      "size_bytes": 1410
+    }
+  ],
+  "files": [
+    {
+      "relative_path": "Build/Game.data",
+      "root_hash": "0x34a0af117947791cefc464e6a97d55340362080a0292c4f66730e01b6ed6a230",
+      "size_bytes": 24680116
+    },
+    {
+      "relative_path": "Build/Game.framework.js",
+      "root_hash": "0x6ac4084dba37450a65b317622c6a229b92106da17010605c4ffa826f0f29a928",
+      "size_bytes": 466970
+    },
+    {
+      "relative_path": "Build/Game.loader.js",
+      "root_hash": "0x16858226d6522fbc8f5304fe3918d66b716f724327fc0b47b7d5d659263ae1e6",
+      "size_bytes": 26416
+    },
+    {
+      "relative_path": "Build/Game.wasm",
+      "root_hash": "0xc16fdf5d9a416327c035b1f3912f6b3ca2f7ea57716c9e73f7096770cb02d6f0",
+      "size_bytes": 44762248
+    }
+  ]
+}

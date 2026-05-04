@@ -73,6 +73,10 @@ const playerNameSchema = Joi.object({
 });
 
 // Stats filter validation
+const leaderboardAiCommentQuerySchema = Joi.object({
+  wallet: walletAddressSchema,
+});
+
 const statsFilterSchema = Joi.object({
   statType: Joi.string()
     .valid(
@@ -158,10 +162,25 @@ const validateStatsFilter = (req, res, next) => {
   next();
 };
 
+/** GET /api/leaderboard/ai-comment?wallet=0x… */
+const validateLeaderboardAiCommentQuery = (req, res, next) => {
+  const { error } = leaderboardAiCommentQuerySchema.validate(req.query, {
+    allowUnknown: true,
+  });
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      error: error.details[0].message,
+    });
+  }
+  next();
+};
+
 module.exports = {
   validateWalletAddress,
   validateUserData,
   validateLogin,
   validatePlayerName,
   validateStatsFilter,
+  validateLeaderboardAiCommentQuery,
 };

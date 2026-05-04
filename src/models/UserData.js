@@ -64,15 +64,27 @@ const userDataSchema = new mongoose.Schema({
     useAvatarSet2: { type: Boolean, default: true },
   },
 
-  /** Latest 0G DA login-session submission (gateway eventId + status hints) */
+  /** Latest 0G DA submission — updated on every event for quick lookup */
   daSnapshot: {
-    eventId: { type: String, default: null },
-    daStatus: { type: String, default: null },
+    eventId:     { type: String, default: null },
+    eventType:   { type: String, default: null },
+    daStatus:    { type: String, default: null },
     daReference: { type: mongoose.Schema.Types.Mixed, default: null },
-    daBlobInfo: { type: mongoose.Schema.Types.Mixed, default: null },
-    snapshotAt: { type: Date, default: null },
-    trigger: { type: String, default: null },
+    daBlobInfo:  { type: mongoose.Schema.Types.Mixed, default: null },
+    snapshotAt:  { type: Date, default: null },
+    trigger:     { type: String, default: null },
   },
+
+  /** Full 0G DA event history — all events submitted for this wallet (latest 50) */
+  daEvents: [{
+    eventId:     { type: String },
+    eventType:   { type: String },   // session.login | stats.update | player.name
+    daStatus:    { type: String, default: 'submitted' },
+    daReference: { type: mongoose.Schema.Types.Mixed, default: null },
+    daBlobInfo:  { type: mongoose.Schema.Types.Mixed, default: null },
+    submittedAt: { type: Date },
+    trigger:     { type: String },
+  }],
 }, {
   timestamps: true,
   versionKey: false,
