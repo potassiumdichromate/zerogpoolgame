@@ -1,102 +1,111 @@
-# ZeroGPool Backend API
+# ZeroGPool Backend
 
-Production-ready backend for ZerpGPool game with MongoDB integration.
+Node/Express backend for ZeroGPool. It serves:
 
-**0G integration (DA gateway + optional EVM sessions):** see **[0G_INTEGRATION.md](./0G_INTEGRATION.md)** for architecture, env vars, routes, data flow, and operational notes.
+- gameplay/profile APIs on `/api`
+- Unity WebGL static files on `/zeroGpool-play`
+- 0G-backed game integration (manifest routes, DA event submission, optional compute usage)
 
-## Features
+For full 0G architecture and deep operational notes, see `0G_INTEGRATION.md`.
 
-- ✅ RESTful API with 3 endpoints
-- ✅ MongoDB for data persistence
-- ✅ No caching - real-time data
-- ✅ Input validation with Joi
-- ✅ Security headers with Helmet
-- ✅ Rate limiting
-- ✅ Comprehensive error handling
-- ✅ Winston logging
-- ✅ CORS support
-- ✅ Production-ready
+## Tech Stack
 
-## Prerequisites
+- Node.js + Express
+- Mongoose data layer
+- Joi request validation
+- Winston logging
+- Helmet, rate limiting, CORS
+- Optional blockchain session recorder + 0G DA gateway integration
 
-- Node.js >= 18.0.0
-- MongoDB database (MongoDB Atlas recommended)
+## Quick Start
 
-## Installation
-
-1. Clone the repository
-2. Install dependencies:
 ```bash
-   npm install
-```
-3. Create `.env` file from `.env.example`:
-```bash
-   cp .env.example .env
-```
-4. Update `.env` with your configuration
-
-## Running Locally
-
-Development mode:
-```bash
+npm install
+cp .env.example .env
 npm run dev
 ```
 
-Production mode:
+Server defaults to `http://localhost:3000`.
+
+## Environment
+
+Use `.env.example` as source of truth. Common keys:
+
+- `PORT`, `NODE_ENV`
+- `MONGODB_URI`
+- `JWT_SECRET`, `JWT_EXPIRES_IN`, `BROWSER_JWT_SECRET`
+- `ALLOWED_ORIGINS`
+- `ZEROG_DA_GATEWAY_URL`, `ZEROG_DA_API_KEY`, `ZEROG_DA_ENABLED`
+- `BLOCKCHAIN_RPC_URL`, `OPERATOR_PRIVATE_KEY`, `CONTRACT_ADDRESS` (optional)
+- `GAME_WEBGL_CDN_BASE_URL`, `GAME_WEBGL_0G_MANIFEST_PATH`
+- `GAME_WEBGL_INDEXER_PROBE`, `GAME_WEBGL_INDEXER_PROBE_TIMEOUT_MS`
+
+## Scripts
+
 ```bash
-npm start
+npm run dev      # nodemon
+npm start        # production start
+npm test         # node:test suite
 ```
 
-## API Endpoints
+## Main Routes
 
-### 1. Get User Data
-```http
-GET /api/user?walletAddress=0x1234567890abcdef1234567890abcdef12345678
-```
+### Health
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "walletAddress": "0x1234...",
-    "playerData": {...},
-    "stats": {...},
-    ...
-  }
-}
-```
+- `GET /` basic API + endpoint map
+- `GET /api/health` backend health flags
 
-### 2. Save User Data
-```http
-POST /api/user
-Content-Type: application/json
+### Auth & Player
 
-{
-  "walletAddress": "0x1234567890abcdef1234567890abcdef12345678",
-  "playerData": {...},
-  "stats": {...},
-  ...
-}
-```
+- `POST /api/auth/login`
+- `POST /api/v2/login`
+- `GET /api/user?walletAddress=...`
+- `POST /api/user`
+- `GET /api/player/data`
+- `POST /api/player/name`
+- `GET /api/player/stats`
 
-### 3. Leaderboard
-```http
-GET /api/leaderboard
-```
+### Leaderboard
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "rank": 1,
-      "walletAddress": "0x1234...",
-      "playerName": "Player1",
-      "totalBallsPocketed": 1500,
-      "totalGamesWon": 100
-    }
-  ],
-  "count": 100
-}
+- `GET /api/leaderboard`
+- `GET /api/leaderboard/ai-comment?wallet=...`
+
+### 0G / WebGL Manifest
+
+- `GET /api/game/webgl-manifest`
+- `GET /api/game/storage-indexer-health`
+
+### DA / Blockchain
+
+- `GET /api/da/health`
+- `GET /api/da/snapshot?wallet=...`
+- `GET /api/da/status?wallet=...`
+- `GET /api/da/retrieve?wallet=...`
+- `GET /api/blockchain/session/:walletAddress`
+- `GET /api/blockchain/login-count/:walletAddress`
+- `GET /api/blockchain/stats`
+
+### Static Unity Build
+
+- `GET /zeroGpool-play/...` serves files from `public/zeroGpool-play`
+
+## Notes For Production
+
+- Keep secrets only in server env vars; never commit real `.env`.
+- Keep `webgl-0g-manifest.json` and frontend manifest in sync after uploads.
+- If CDN is used for bytes, set `GAME_WEBGL_CDN_BASE_URL` correctly (folder base, no `index.html` suffix).
+- Keep CORS origins aligned with deployed frontend domains.
+
+## Troubleshooting
+
+- **Frontend login `ERR_CONNECTION_REFUSED`**: backend URL is wrong/down.
+- **Game manifest lacks `cdnBaseUrl`**: set `GAME_WEBGL_CDN_BASE_URL` on backend.
+- **WebGL stuck on network error**: verify CDN file paths/CORS and manifest roots.
+- **Auth appears stale after logout**: clear client storage + refresh frontend session.
+
+## Repository Hygiene
+
+- Commit:
+  - `src/`, `public/zeroGpool-play/`, `test/`, docs, lockfile
+- Do not commit:
+  - `.env`, `node_modules`, temp files
