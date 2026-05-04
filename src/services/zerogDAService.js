@@ -98,6 +98,19 @@ const submitStatsUpdate = (walletAddress, userDoc) =>
 const submitNameUpdate = (walletAddress, newName) =>
   submitEvent('player.name', walletAddress, buildNameData(walletAddress, newName));
 
+const submitPlayerSave = (walletAddress, userDoc, trigger = 'player.save') => {
+  const o = userDoc?.toObject ? userDoc.toObject() : { ...userDoc };
+  return submitEvent('player.save', walletAddress, {
+    walletAddress,
+    trigger,
+    playerData: o.playerData || {},
+    controlSettings: o.controlSettings || {},
+    gameSettings: o.gameSettings || {},
+    stats: extractStats(userDoc),
+    recordedAt: new Date().toISOString(),
+  });
+};
+
 // ─── Status / retrieve / health ──────────────────────────────────────────────
 
 const getEventStatus = async (eventId) => {
@@ -176,6 +189,7 @@ module.exports = {
   submitLoginEvent,
   submitStatsUpdate,
   submitNameUpdate,
+  submitPlayerSave,
   getEventStatus,
   retrievePlayerEvent,
   healthCheck,

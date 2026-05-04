@@ -16,6 +16,7 @@ const logger = require('../utils/logger');
 const blockchainService = require('../utils/blockchain');
 const zerogDAService = require('../services/zerogDAService');
 const { generatePoolLeaderboardComment } = require('../services/aiPoolCommentService');
+const { evaluateLeaderboardSubmission } = require('../services/leaderboardAntiCheatService');
 
 router.use('/game', require('./gameWebglManifest'));
 
@@ -301,6 +302,20 @@ router.post('/user', validateWalletAddress, validateUserData, async (req, res, n
   try {
     const { walletAddress, ...userData } = req.body;
     const normalizedAddress = walletAddress.toLowerCase();
+    const existingUser = await UserData.findOne({ walletAddress: normalizedAddress }).select('stats');
+    const antiCheat = await evaluateLeaderboardSubmission({
+      walletAddress: normalizedAddress,
+      previousStats: existingUser?.stats || {},
+      nextStats: userData?.stats || {},
+    });
+    if (!antiCheat.accepted) {
+      logger.warn(`[0g-anti-cheat] rejected leaderboard submission wallet=${normalizedAddress}`, antiCheat.details);
+      return res.status(422).json({
+        success: false,
+        error: 'SCORE_REJECTED_BY_ANTICHEAT',
+        antiCheat: antiCheat.details,
+      });
+    }
 
     const updatedUser = await UserData.findOneAndUpdate(
       { walletAddress: normalizedAddress },
@@ -308,6 +323,12 @@ router.post('/user', validateWalletAddress, validateUserData, async (req, res, n
         $set: {
           ...userData,
           walletAddress: normalizedAddress,
+          antiCheatSnapshot: {
+            accepted: true,
+            source: antiCheat.source,
+            reasons: antiCheat.details?.suspiciousReasons || [],
+            checkedAt: new Date(),
+          },
         },
       },
       {
@@ -348,11 +369,32 @@ router.post('/user', validateWalletAddress, validateUserData, async (req, res, n
 
     queueDA('user.save', 'stats.update', updatedUser._id, normalizedAddress,
       () => zerogDAService.submitStatsUpdate(normalizedAddress, updatedUser));
+    queueDA('user.save', 'player.save', updatedUser._id, normalizedAddress,
+      async () => {
+        const r = await zerogDAService.submitPlayerSave(normalizedAddress, updatedUser, 'user.save');
+        if (r?.eventId) {
+          await UserData.findByIdAndUpdate(updatedUser._id, {
+            $set: {
+              playerSaveSnapshot: {
+                eventId: r.eventId,
+                submittedAt: new Date(),
+                trigger: 'user.save',
+              },
+            },
+          });
+        }
+        return r;
+      });
 
     res.json({
       success: true,
       data: updatedUser,
       blockchain: blockchainResult,
+      antiCheat: {
+        accepted: true,
+        source: antiCheat.source,
+        suspiciousReasons: antiCheat.details?.suspiciousReasons || [],
+      },
     });
   } catch (error) {
     next(error);
@@ -364,7 +406,7 @@ router.get('/leaderboard', async (req, res, next) => {
   try {
     const leaderboard = await UserData
       .find()
-      .select('walletAddress playerData.playerNames0 stats.totalBallsPocketed stats.totalGamesWonVsCPU stats.totalGamesWonVsHuman')
+      .select('walletAddress playerData.playerNames0 stats.totalBallsPocketed stats.totalGamesWonVsCPU stats.totalGamesWonVsHuman antiCheatSnapshot playerSaveSnapshot')
       .sort({ 'stats.totalBallsPocketed': -1 })
       .limit(100)
       .lean();
@@ -375,6 +417,11 @@ router.get('/leaderboard', async (req, res, next) => {
       playerName: user.playerData?.playerNames0 || 'Anonymous',
       totalBallsPocketed: user.stats?.totalBallsPocketed || 0,
       totalGamesWon: (user.stats?.totalGamesWonVsCPU || 0) + (user.stats?.totalGamesWonVsHuman || 0),
+      trust: {
+        antiCheatSource: user.antiCheatSnapshot?.source || null,
+        antiCheatCheckedAt: user.antiCheatSnapshot?.checkedAt || null,
+        saveBackedBy0g: Boolean(user.playerSaveSnapshot?.eventId),
+      },
     }));
 
     res.json({
@@ -496,6 +543,22 @@ router.post('/player/name', authenticate, validatePlayerName, async (req, res, n
 
     queueDA('player.name', 'player.name', updatedUser._id, req.walletAddress,
       () => zerogDAService.submitNameUpdate(req.walletAddress, playerNames0));
+    queueDA('player.name', 'player.save', updatedUser._id, req.walletAddress,
+      async () => {
+        const r = await zerogDAService.submitPlayerSave(req.walletAddress, updatedUser, 'player.name');
+        if (r?.eventId) {
+          await UserData.findByIdAndUpdate(updatedUser._id, {
+            $set: {
+              playerSaveSnapshot: {
+                eventId: r.eventId,
+                submittedAt: new Date(),
+                trigger: 'player.name',
+              },
+            },
+          });
+        }
+        return r;
+      });
 
     res.json({
       success: true,

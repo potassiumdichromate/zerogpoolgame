@@ -85,6 +85,21 @@ const userDataSchema = new mongoose.Schema({
     submittedAt: { type: Date },
     trigger:     { type: String },
   }],
+
+  /** Latest 0G player-save mirror event (explicit profile/settings backup). */
+  playerSaveSnapshot: {
+    eventId: { type: String, default: null },
+    submittedAt: { type: Date, default: null },
+    trigger: { type: String, default: null },
+  },
+
+  /** Latest anti-cheat result attached to stat update writes. */
+  antiCheatSnapshot: {
+    accepted: { type: Boolean, default: true },
+    source: { type: String, default: null },
+    reasons: [{ type: String }],
+    checkedAt: { type: Date, default: null },
+  },
 }, {
   timestamps: true,
   versionKey: false,
