@@ -167,10 +167,3 @@ curl -sS "API/api/da/health" | jq .
 | Backend | `cd zeroGpool/zerogpoolgame && npm test` | Node `node:test` — `webglManifestValidate.js` (aligned with frontend rules). |
 | GitHub Actions | `.github/workflows/zeroG-ci.yml` | On changes under `zeroGpool/zerogpool-frontend` or `zeroGpool/zerogpoolgame`: frontend `yarn test` + `yarn build`, backend `npm test`. |
 
----
-
-## Not implemented (optional “10/10” extras)
-
-- **Signed manifest** (JWS / Ed25519) or on-chain manifest hash pin.
-- **Server-side** byte proxy from indexer (auth, bandwidth on API).
-- **Automated tests** for indexer JSON-RPC probes and full SDK Merkle verify in the browser (heavier; schema + manifest validation are covered in CI today).
