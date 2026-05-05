@@ -276,7 +276,7 @@ router.get("/referral/stats", authenticate, async (req, res) => {
 // ==================== PUBLIC USER ENDPOINTS ====================
 
 // GET /api/user - Get or create user data (kept for backward compatibility)
-router.get('/user', validateWalletAddress, async (req, res, next) => {
+router.get('/user', authenticate, validateWalletAddress, async (req, res, next) => {
   try {
     const { walletAddress } = req.query;
     const normalizedAddress = walletAddress.toLowerCase();
@@ -299,7 +299,7 @@ router.get('/user', validateWalletAddress, async (req, res, next) => {
 });
 
 // POST /api/user - Save user data (kept for backward compatibility)
-router.post('/user', validateWalletAddress, validateUserData, async (req, res, next) => {
+router.post('/user', authenticate, validateWalletAddress, validateUserData, async (req, res, next) => {
   try {
     const { walletAddress, ...userData } = req.body;
     const normalizedAddress = walletAddress.toLowerCase();
@@ -408,7 +408,7 @@ router.post('/user', validateWalletAddress, validateUserData, async (req, res, n
 });
 
 // GET /api/leaderboard
-router.get('/leaderboard', async (req, res, next) => {
+router.get('/leaderboard', authenticate, async (req, res, next) => {
   try {
     const leaderboard = await UserData
       .find()
@@ -449,6 +449,7 @@ router.get('/leaderboard', async (req, res, next) => {
 // 0G Compute (primary) + Cloudflare Workers AI fallback — same pattern as Highway Hustle.
 router.get(
   '/leaderboard/ai-comment',
+  authenticate,
   validateLeaderboardAiCommentQuery,
   async (req, res, next) => {
     try {
@@ -621,7 +622,7 @@ router.get('/player/stats', authenticate, validateStatsFilter, async (req, res, 
 
 // ==================== BLOCKCHAIN ENDPOINTS ====================
 
-router.get('/blockchain/session/:walletAddress', async (req, res, next) => {
+router.get('/blockchain/session/:walletAddress', authenticate, async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
     const normalizedAddress = walletAddress.toLowerCase();
@@ -651,7 +652,7 @@ router.get('/blockchain/session/:walletAddress', async (req, res, next) => {
   }
 });
 
-router.get('/blockchain/login-count/:walletAddress', async (req, res, next) => {
+router.get('/blockchain/login-count/:walletAddress', authenticate, async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
     const normalizedAddress = walletAddress.toLowerCase();
@@ -677,7 +678,7 @@ router.get('/blockchain/login-count/:walletAddress', async (req, res, next) => {
   }
 });
 
-router.get('/blockchain/stats', async (req, res, next) => {
+router.get('/blockchain/stats', authenticate, async (req, res, next) => {
   try {
     if (!blockchainService.isReady()) {
       return res.status(503).json({
@@ -699,7 +700,7 @@ router.get('/blockchain/stats', async (req, res, next) => {
 
 // ==================== 0G DA (login session blobs) ====================
 
-router.get('/da/snapshot', async (req, res, next) => {
+router.get('/da/snapshot', authenticate, async (req, res, next) => {
   try {
     const wallet = req.query.wallet;
     if (!wallet || typeof wallet !== 'string') {
@@ -751,7 +752,7 @@ router.get('/da/snapshot', async (req, res, next) => {
   }
 });
 
-router.get('/da/status', async (req, res, next) => {
+router.get('/da/status', authenticate, async (req, res, next) => {
   try {
     const wallet = req.query.wallet;
     if (!wallet || typeof wallet !== 'string') {
@@ -796,7 +797,7 @@ router.get('/da/status', async (req, res, next) => {
   }
 });
 
-router.get('/da/retrieve', async (req, res, next) => {
+router.get('/da/retrieve', authenticate, async (req, res, next) => {
   try {
     const wallet = req.query.wallet;
     if (!wallet || typeof wallet !== 'string') {
@@ -829,7 +830,7 @@ router.get('/da/retrieve', async (req, res, next) => {
   }
 });
 
-router.get('/da/health', async (req, res, next) => {
+router.get('/da/health', authenticate, async (req, res, next) => {
   try {
     const da = await zerogDAService.healthCheck();
     res.json({ success: true, da });
@@ -839,7 +840,7 @@ router.get('/da/health', async (req, res, next) => {
 });
 
 // Health check endpoint
-router.get('/health', (req, res) => {
+router.get('/health', authenticate, (req, res) => {
   const zgKey =
     process.env.ZEROG_API_KEY ||
     process.env.ZERO_G_API_KEY ||
