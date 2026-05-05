@@ -1,6 +1,8 @@
 # ZeroGPool Backend
 
-Node/Express backend for ZeroGPool. It serves:
+ZeroGPool is a Web3 game powered by 0G, where gameplay, player progress, and performance are verifiable, stored, and enhanced through decentralized infrastructure.
+
+This service is the Node/Express backend for ZeroGPool. It serves:
 
 - gameplay/profile APIs on `/api`
 - Unity WebGL static files on `/zeroGpool-play`

@@ -1,5 +1,6 @@
 const logger = require('../utils/logger');
 const { randomUUID } = require('crypto');
+const { derivePlayerIntelligence } = require('./playerIntelligenceService');
 
 const GATEWAY_URL = process.env.ZEROG_DA_GATEWAY_URL || 'https://da.warzonewarriors.xyz';
 const SUBMIT_TIMEOUT = 10_000;
@@ -7,14 +8,35 @@ const STATUS_TIMEOUT = 8_000;
 const RETRIEVE_TIMEOUT = 12_000;
 const GAME_ID = 'zeroGpool';
 
+const getDaBearerToken = () =>
+  (process.env.ZEROG_DA_API_TOKEN || process.env.ZEROG_DA_API_KEY || '').trim();
+
 const getHeaders = () => {
   const headers = { 'Content-Type': 'application/json' };
-  const key = process.env.ZEROG_DA_API_KEY;
-  if (key) headers.Authorization = `Bearer ${key}`;
+  const token = getDaBearerToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   return headers;
 };
 
 const isEnabled = () => process.env.ZEROG_DA_ENABLED !== 'false';
+
+const logStartup = () => {
+  logger.info('[0g-da] startup config', {
+    gatewayUrl: GATEWAY_URL,
+    eventsUrl: `${GATEWAY_URL.replace(/\/+$/, '')}/v1/events`,
+    statusUrlPattern: `${GATEWAY_URL.replace(/\/+$/, '')}/v1/da/status/:eventId`,
+    game: GAME_ID,
+    hasBearer: Boolean(getDaBearerToken()),
+    bearerFrom: process.env.ZEROG_DA_API_TOKEN
+      ? 'ZEROG_DA_API_TOKEN'
+      : process.env.ZEROG_DA_API_KEY
+        ? 'ZEROG_DA_API_KEY'
+        : '(none)',
+    daEnabled: isEnabled(),
+    submitTimeoutMs: SUBMIT_TIMEOUT,
+  });
+};
+logStartup();
 
 // ─── Data builders ────────────────────────────────────────────────────────────
 
@@ -33,22 +55,51 @@ const extractStats = (userDoc) => {
   };
 };
 
+// Pure helper: derive optional gameplay block from stats + caller-provided extras.
+// Only includes fields that can be derived (or were explicitly passed).
+const buildGameplayBlock = (stats, extras = {}) => {
+  const block = {
+    score: Number(stats.totalBallsPocketed) || 0,
+    mode: typeof extras.mode === 'string' && extras.mode.trim() ? extras.mode.trim() : 'casual',
+  };
+
+  const won = (Number(stats.totalGamesWonVsCPU) || 0) + (Number(stats.totalGamesWonVsHuman) || 0);
+  const played = (Number(stats.totalGamesPlayedVsCPU) || 0) + (Number(stats.totalGamesPlayedVsHuman) || 0);
+  if (played > 0) {
+    block.winRatio = Number((won / played).toFixed(4));
+  }
+
+  if (typeof extras.accuracy === 'number' && Number.isFinite(extras.accuracy)) {
+    block.accuracy = extras.accuracy;
+  }
+  if (typeof extras.latency === 'number' && Number.isFinite(extras.latency)) {
+    block.latency = extras.latency;
+  }
+  return block;
+};
+
 const buildLoginData = (walletAddress, userDoc) => {
   const o = userDoc?.toObject ? userDoc.toObject() : { ...userDoc };
+  const stats = extractStats(userDoc);
   return {
     walletAddress,
     playerName: o.playerData?.playerNames0 || 'Anonymous',
-    stats: extractStats(userDoc),
+    stats,
+    gameplay: buildGameplayBlock(stats),
+    intelligence: derivePlayerIntelligence(stats),
     recordedAt: new Date().toISOString(),
   };
 };
 
-const buildStatsData = (walletAddress, userDoc) => {
+const buildStatsData = (walletAddress, userDoc, extras = {}) => {
   const o = userDoc?.toObject ? userDoc.toObject() : { ...userDoc };
+  const stats = extractStats(userDoc);
   return {
     walletAddress,
     playerName: o.playerData?.playerNames0 || 'Anonymous',
-    stats: extractStats(userDoc),
+    stats,
+    gameplay: buildGameplayBlock(stats, extras),
+    intelligence: derivePlayerIntelligence(stats),
     recordedAt: new Date().toISOString(),
   };
 };
@@ -92,8 +143,8 @@ const submitEvent = async (eventName, walletAddress, data) => {
 const submitLoginEvent = (walletAddress, userDoc) =>
   submitEvent('session.login', walletAddress, buildLoginData(walletAddress, userDoc));
 
-const submitStatsUpdate = (walletAddress, userDoc) =>
-  submitEvent('stats.update', walletAddress, buildStatsData(walletAddress, userDoc));
+const submitStatsUpdate = (walletAddress, userDoc, extras = {}) =>
+  submitEvent('stats.update', walletAddress, buildStatsData(walletAddress, userDoc, extras));
 
 const submitNameUpdate = (walletAddress, newName) =>
   submitEvent('player.name', walletAddress, buildNameData(walletAddress, newName));
@@ -185,6 +236,14 @@ const healthCheck = async () => {
 
 const getGatewayBaseUrl = () => GATEWAY_URL.replace(/\/+$/, '');
 
+const getDebugSummary = () => ({
+  gatewayUrl: GATEWAY_URL,
+  eventsUrl: `${GATEWAY_URL.replace(/\/+$/, '')}/v1/events`,
+  game: GAME_ID,
+  hasBearer: Boolean(getDaBearerToken()),
+  daEnabled: isEnabled(),
+});
+
 module.exports = {
   submitLoginEvent,
   submitStatsUpdate,
@@ -194,6 +253,7 @@ module.exports = {
   retrievePlayerEvent,
   healthCheck,
   getGatewayBaseUrl,
+  getDebugSummary,
   // kept for backward compat
   submitPlayerEvent: (eventName, walletAddress, userDoc) =>
     submitEvent(eventName, walletAddress, buildLoginData(walletAddress, userDoc)),

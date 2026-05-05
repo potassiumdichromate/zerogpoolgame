@@ -17,6 +17,7 @@ const blockchainService = require('../utils/blockchain');
 const zerogDAService = require('../services/zerogDAService');
 const { generatePoolLeaderboardComment } = require('../services/aiPoolCommentService');
 const { evaluateLeaderboardSubmission } = require('../services/leaderboardAntiCheatService');
+const { derivePlayerIntelligence } = require('../services/playerIntelligenceService');
 
 router.use('/game', require('./gameWebglManifest'));
 
@@ -367,8 +368,13 @@ router.post('/user', validateWalletAddress, validateUserData, async (req, res, n
       }
     }
 
+    const daExtras = {};
+    if (typeof req.body?.accuracy === 'number') daExtras.accuracy = req.body.accuracy;
+    if (typeof req.body?.latency === 'number') daExtras.latency = req.body.latency;
+    if (typeof req.body?.mode === 'string') daExtras.mode = req.body.mode;
+
     queueDA('user.save', 'stats.update', updatedUser._id, normalizedAddress,
-      () => zerogDAService.submitStatsUpdate(normalizedAddress, updatedUser));
+      () => zerogDAService.submitStatsUpdate(normalizedAddress, updatedUser, daExtras));
     queueDA('user.save', 'player.save', updatedUser._id, normalizedAddress,
       async () => {
         const r = await zerogDAService.submitPlayerSave(normalizedAddress, updatedUser, 'user.save');
@@ -406,23 +412,28 @@ router.get('/leaderboard', async (req, res, next) => {
   try {
     const leaderboard = await UserData
       .find()
-      .select('walletAddress playerData.playerNames0 stats.totalBallsPocketed stats.totalGamesWonVsCPU stats.totalGamesWonVsHuman antiCheatSnapshot playerSaveSnapshot')
+      .select('walletAddress playerData.playerNames0 stats antiCheatSnapshot playerSaveSnapshot')
       .sort({ 'stats.totalBallsPocketed': -1 })
       .limit(100)
       .lean();
 
-    const formattedLeaderboard = leaderboard.map((user, index) => ({
-      rank: index + 1,
-      walletAddress: user.walletAddress,
-      playerName: user.playerData?.playerNames0 || 'Anonymous',
-      totalBallsPocketed: user.stats?.totalBallsPocketed || 0,
-      totalGamesWon: (user.stats?.totalGamesWonVsCPU || 0) + (user.stats?.totalGamesWonVsHuman || 0),
-      trust: {
-        antiCheatSource: user.antiCheatSnapshot?.source || null,
-        antiCheatCheckedAt: user.antiCheatSnapshot?.checkedAt || null,
-        saveBackedBy0g: Boolean(user.playerSaveSnapshot?.eventId),
-      },
-    }));
+    const formattedLeaderboard = leaderboard.map((user, index) => {
+      const stats = user.stats || {};
+      const intel = derivePlayerIntelligence(stats);
+      return {
+        rank: index + 1,
+        walletAddress: user.walletAddress,
+        playerName: user.playerData?.playerNames0 || 'Anonymous',
+        totalBallsPocketed: stats.totalBallsPocketed || 0,
+        totalGamesWon: (stats.totalGamesWonVsCPU || 0) + (stats.totalGamesWonVsHuman || 0),
+        trust: {
+          antiCheatSource: user.antiCheatSnapshot?.source || null,
+          antiCheatCheckedAt: user.antiCheatSnapshot?.checkedAt || null,
+          saveBackedBy0g: Boolean(user.playerSaveSnapshot?.eventId),
+        },
+        intelligence: { skillLevel: intel.skillLevel },
+      };
+    });
 
     res.json({
       success: true,
@@ -496,7 +507,7 @@ router.get('/player/data', authenticate, async (req, res, next) => {
   try {
     const userData = await UserData.findOne({ 
       walletAddress: req.walletAddress 
-    }).select('playerData');
+    }).select('playerData stats');
 
     if (!userData) {
       return res.status(404).json({
@@ -508,6 +519,7 @@ router.get('/player/data', authenticate, async (req, res, next) => {
     res.json({
       success: true,
       data: userData.playerData,
+      intelligence: derivePlayerIntelligence(userData.stats || {}),
     });
   } catch (error) {
     next(error);
