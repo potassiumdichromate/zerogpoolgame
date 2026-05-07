@@ -4,62 +4,13 @@
  */
 
 const logger = require('../utils/logger');
-const { getZerogConfig } = require('./zerogComputeService');
+const { callCompute } = require('./zerogComputeService');
 
 const ANALYSIS_TIMEOUT_MS = Number(process.env.ZEROG_ANALYSIS_TIMEOUT_MS || 20_000);
 const ANALYSIS_MODEL =
   process.env.ZEROG_ANALYSIS_MODEL ||
   process.env.ZEROG_MODEL ||
   'zai-org/GLM-5-FP8';
-
-async function callCompute(messages, maxTokens = 256) {
-  const cfg = getZerogConfig();
-  if (!cfg.apiKey) return { ok: false, reason: 'missing_api_key' };
-
-  const started = Date.now();
-  try {
-    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${cfg.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: ANALYSIS_MODEL,
-        messages,
-        temperature: 0.3,
-        max_tokens: maxTokens,
-        stream: false,
-        verify_tee: true,
-        provider: { sort: process.env.ZEROG_COMPUTE_ROUTING || 'latency' },
-      }),
-      signal: AbortSignal.timeout(ANALYSIS_TIMEOUT_MS),
-    });
-
-    const latencyMs = Date.now() - started;
-
-    if (!res.ok) {
-      logger.warn('[0g-pool-analysis] http_error', { status: res.status, latencyMs });
-      return { ok: false, reason: `http_${res.status}`, latencyMs };
-    }
-
-    const payload = await res.json().catch(() => null);
-    const trace = payload?.x_0g_trace || {};
-    const text = payload?.choices?.[0]?.message?.content || '';
-
-    return {
-      ok: true,
-      text,
-      teeVerified: trace.tee_verified === true,
-      providerAddress: trace.provider || null,
-      latencyMs,
-    };
-  } catch (err) {
-    const latencyMs = Date.now() - started;
-    logger.warn('[0g-pool-analysis] error', { error: err.message, latencyMs });
-    return { ok: false, reason: err.message, latencyMs };
-  }
-}
 
 function parseJson(text) {
   try {
@@ -99,7 +50,7 @@ Tips must be pool-specific (shot selection, positioning, bank shots, break strat
     },
   ];
 
-  const result = await callCompute(messages, 256);
+  const result = await callCompute(messages, { model: ANALYSIS_MODEL, temperature: 0.3, maxTokens: 256, timeoutMs: ANALYSIS_TIMEOUT_MS });
   if (!result.ok) return { ok: false, reason: result.reason };
 
   const parsed = parseJson(result.text);
@@ -157,7 +108,7 @@ Return JSON: {"insight": "your sentence"}`,
     },
   ];
 
-  const result = await callCompute(messages, 150);
+  const result = await callCompute(messages, { model: ANALYSIS_MODEL, temperature: 0.3, maxTokens: 150, timeoutMs: ANALYSIS_TIMEOUT_MS });
   if (!result.ok) return { ok: false, reason: result.reason };
 
   const parsed = parseJson(result.text);
@@ -228,7 +179,7 @@ Return JSON:
     },
   ];
 
-  const result = await callCompute(messages, 200);
+  const result = await callCompute(messages, { model: ANALYSIS_MODEL, temperature: 0.3, maxTokens: 200, timeoutMs: ANALYSIS_TIMEOUT_MS });
   if (!result.ok) return { ok: false, reason: result.reason };
 
   const parsed = parseJson(result.text);
@@ -296,7 +247,7 @@ Return JSON:
     },
   ];
 
-  const result = await callCompute(messages, 150);
+  const result = await callCompute(messages, { model: ANALYSIS_MODEL, temperature: 0.3, maxTokens: 150, timeoutMs: ANALYSIS_TIMEOUT_MS });
   if (!result.ok) return { ok: false, reason: result.reason };
 
   const parsed = parseJson(result.text);

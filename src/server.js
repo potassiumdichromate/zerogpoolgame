@@ -9,6 +9,7 @@ const errorHandler = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
 const blockchainService   = require('./utils/blockchain');
 const zerogDAService      = require('./services/zerogDAService');
+const UserData            = require('./models/UserData');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,6 +33,39 @@ blockchainService.initialize()
 zerogDAService.healthCheck().then((s) => {
   logger.info(`[0g-da] gateway ${s.gateway} online=${s.online}`);
 });
+
+// DA confirmation poller — every 5 min, promote submitted → confirmed blobs
+const DA_POLL_MS = Number(process.env.DA_POLL_INTERVAL_MS || 5 * 60 * 1000);
+setInterval(async () => {
+  try {
+    const pending = await UserData.find({ 'daSnapshot.daStatus': 'submitted' })
+      .select('daSnapshot _id')
+      .limit(50)
+      .lean();
+    for (const user of pending) {
+      const eventId = user.daSnapshot?.eventId;
+      if (!eventId) continue;
+      try {
+        const status = await zerogDAService.getEventStatus(eventId);
+        const st = String(status?.daStatus || '').toLowerCase();
+        if (status?.daBlobInfo && (st === 'confirmed' || st === 'finalized')) {
+          await UserData.findByIdAndUpdate(user._id, {
+            $set: {
+              'daSnapshot.daStatus':    status.daStatus,
+              'daSnapshot.daReference': status.daReference,
+              'daSnapshot.daBlobInfo':  status.daBlobInfo,
+            },
+          });
+          logger.info(`[da-poller] confirmed eventId=${eventId}`);
+        }
+      } catch (err) {
+        logger.warn(`[da-poller] eventId=${eventId}: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    logger.warn(`[da-poller] cycle error: ${err.message}`);
+  }
+}, DA_POLL_MS);
 
 
 // ✅ Trust proxy (needed for Render)

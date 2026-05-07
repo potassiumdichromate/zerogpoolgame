@@ -5,7 +5,7 @@
 
 const { randomUUID } = require('crypto');
 const logger = require("../utils/logger");
-const { getZerogConfig, poolPlayerForAi } = require("./zerogComputeService");
+const { callCompute, poolPlayerForAi } = require("./zerogComputeService");
 
 const POOL_MODEL =
   process.env.ZEROG_POOL_MODEL ||
@@ -56,92 +56,48 @@ const isValidComment = (text) => {
 };
 
 const generateCommentZerog = async ({ currentPlayer, topPlayer }) => {
-  const zg = getZerogConfig();
-  if (!zg.apiKey) {
-    return { ok: false, phase: "no_api_key" };
-  }
-
   const messages = buildMessages({ currentPlayer, topPlayer });
   const requestId = randomUUID();
-  const started = Date.now();
-  try {
-    const response = await fetch(`${zg.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${zg.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: POOL_MODEL,
-        messages,
-        temperature: 0.7,
-        max_tokens: POOL_MAX_TOKENS,
-        stream: false,
-        verify_tee: true,
-        provider: { sort: process.env.ZEROG_COMPUTE_ROUTING || 'latency' },
-      }),
-      signal: AbortSignal.timeout(POOL_TIMEOUT_MS),
-    });
 
-    const latencyMs = Date.now() - started;
+  const result = await callCompute(messages, {
+    model:     POOL_MODEL,
+    temperature: 0.7,
+    maxTokens: POOL_MAX_TOKENS,
+    timeoutMs: POOL_TIMEOUT_MS,
+  });
 
-    if (!response.ok) {
-      logger.warn("[0g-pool-ai] request failed", {
-        status: response.status,
-        latencyMs,
-        model: POOL_MODEL,
-      });
-      return { ok: false, phase: "http_error", latencyMs };
-    }
-
-    const payload = await response.json().catch(() => null);
-    const trace = payload?.x_0g_trace || {};
-    const teeVerified = trace.tee_verified === true;
-    const providerAddress = trace.provider || null;
-
-    const raw =
-      typeof payload?.choices?.[0]?.message?.content === "string"
-        ? payload.choices[0].message.content
-        : null;
-    const comment = raw?.trim() || null;
-    const usage = normalizeUsage(payload?.usage);
-
-    if (!comment || !isValidComment(comment)) {
-      logger.warn("[0g-pool-ai] invalid_or_empty_output", {
-        latencyMs,
-        model: POOL_MODEL,
-      });
-      return { ok: false, phase: "invalid_output", latencyMs };
-    }
-
-    logger.info("[0g-pool-ai] inference_success", {
-      model: POOL_MODEL,
-      latencyMs,
-      teeVerified,
-      providerAddress,
-      requestId,
-      token_usage: usage,
-    });
-
-    return {
-      ok: true,
-      comment,
-      latencyMs,
-      usage,
-      model: POOL_MODEL,
-      teeVerified,
-      providerAddress,
-      requestId,
-    };
-  } catch (err) {
-    const latencyMs = Date.now() - started;
-    logger.warn("[0g-pool-ai] error", {
-      error: err.message,
-      latencyMs,
-      model: POOL_MODEL,
-    });
-    return { ok: false, phase: "exception", latencyMs };
+  if (!result.ok) {
+    logger.warn("[0g-pool-ai] compute failed", { reason: result.reason, model: POOL_MODEL });
+    return { ok: false, phase: result.reason || "compute_error", latencyMs: result.latencyMs };
   }
+
+  const comment = result.text?.trim() || null;
+  const usage = normalizeUsage(result.usage);
+
+  if (!comment || !isValidComment(comment)) {
+    logger.warn("[0g-pool-ai] invalid_or_empty_output", { latencyMs: result.latencyMs, model: POOL_MODEL });
+    return { ok: false, phase: "invalid_output", latencyMs: result.latencyMs };
+  }
+
+  logger.info("[0g-pool-ai] inference_success", {
+    model: POOL_MODEL,
+    latencyMs: result.latencyMs,
+    teeVerified: result.teeVerified,
+    providerAddress: result.providerAddress,
+    requestId,
+    token_usage: usage,
+  });
+
+  return {
+    ok: true,
+    comment,
+    latencyMs:       result.latencyMs,
+    usage,
+    model:           POOL_MODEL,
+    teeVerified:     result.teeVerified,
+    providerAddress: result.providerAddress,
+    requestId,
+  };
 };
 
 /**

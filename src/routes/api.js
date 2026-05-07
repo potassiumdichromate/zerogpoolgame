@@ -122,38 +122,15 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
 
     logger.info(`User logged in: ${normalizedAddress}`);
 
-    // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain
-    let blockchainResult = null;
+    // Fire-and-forget — never block login on a chain write
     if (blockchainService.isReady()) {
-      try {
-        const sessionResult = await blockchainService.recordSession(normalizedAddress, userData.stats);
-        if (sessionResult && sessionResult.success) {
-          logger.info(`✅ Blockchain session recorded: ${sessionResult.transactionHash}`);
-          blockchainResult = {
-            success: true,
-            txHash: sessionResult.transactionHash,
-            blockNumber: sessionResult.blockNumber,
-            gasUsed: sessionResult.gasUsed,
-            onChainLoginCount: sessionResult.onChainLoginCount,
-            blockchainEnabled: true,
-          };
-        } else {
-          logger.warn(`⚠️ Blockchain session recording failed for ${normalizedAddress}`);
-          blockchainResult = {
-            success: false,
-            error: sessionResult?.error || 'Unknown error',
-            blockchainEnabled: true,
-          };
-        }
-      } catch (error) {
-        logger.error(`❌ Failed to record blockchain session for ${normalizedAddress}:`, error);
-        blockchainResult = {
-          success: false,
-          error: error.message,
-          blockchainEnabled: true,
-        };
-      }
+      const statsSnap = userData.stats ? { ...userData.stats } : {};
+      setImmediate(() => {
+        blockchainService.recordSession(normalizedAddress, statsSnap)
+          .catch(err => logger.warn(`[blockchain] recordSession wallet=${normalizedAddress}: ${err.message}`));
+      });
     }
+    const blockchainResult = blockchainService.isReady() ? { queued: true, blockchainEnabled: true } : null;
 
     const loginUserId = userData._id;
 
@@ -212,37 +189,15 @@ router.post('/v2/login', decodeBrowserJwtOptional, async (req, res, next) => {
 
     logger.info(`User logged in via v2: ${normalizedAddress} (source: ${source || 'unknown'})`);
 
-    // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain
-    let blockchainResult = null;
+    // Fire-and-forget — never block login on a chain write
     if (blockchainService.isReady()) {
-      try {
-        const sessionResult = await blockchainService.recordSession(normalizedAddress, userData.stats);
-        if (sessionResult && sessionResult.success) {
-          logger.info(`✅ Blockchain session recorded: ${sessionResult.transactionHash}`);
-          blockchainResult = {
-            success: true,
-            txHash: sessionResult.transactionHash,
-            blockNumber: sessionResult.blockNumber,
-            gasUsed: sessionResult.gasUsed,
-            onChainLoginCount: sessionResult.onChainLoginCount,
-            blockchainEnabled: true,
-          };
-        } else {
-          blockchainResult = {
-            success: false,
-            error: sessionResult?.error || 'Transaction failed',
-            blockchainEnabled: true,
-          };
-        }
-      } catch (error) {
-        logger.error(`❌ Failed to record blockchain session for ${normalizedAddress}:`, error);
-        blockchainResult = {
-          success: false,
-          error: error.message,
-          blockchainEnabled: true,
-        };
-      }
+      const statsSnap = userData.stats ? { ...userData.stats } : {};
+      setImmediate(() => {
+        blockchainService.recordSession(normalizedAddress, statsSnap)
+          .catch(err => logger.warn(`[blockchain] recordSession wallet=${normalizedAddress}: ${err.message}`));
+      });
     }
+    const blockchainResult = blockchainService.isReady() ? { queued: true, blockchainEnabled: true } : null;
 
     const v2UserId = userData._id;
 
@@ -293,7 +248,7 @@ router.get("/referral/stats", authenticate, async (req, res) => {
 
 // GET /api/user - Get or create user data (kept for backward compatibility)
 router.get('/user', 
-  // authenticate, validateWalletAddress, 
+  authenticate, validateWalletAddress, 
   async (req, res, next) => {
   try {
     const { walletAddress } = req.query;
@@ -318,11 +273,12 @@ router.get('/user',
 
 // POST /api/user - Save user data (kept for backward compatibility)
 router.post('/user',
-  // authenticate, validateWalletAddress, validateUserData,  
+  authenticate, validateWalletAddress, validateUserData,
   async (req, res, next) => {
   try {
-    const { walletAddress, ...userData } = req.body;
-    const normalizedAddress = walletAddress.toLowerCase();
+    const { walletAddress: bodyWallet, ...userData } = req.body;
+    // Always use the JWT-authenticated wallet — prevents saving to a mismatched address
+    const normalizedAddress = (req.walletAddress || bodyWallet).toLowerCase();
     const existingUser = await UserData.findOne({ walletAddress: normalizedAddress }).select('stats');
     const antiCheat = await evaluateLeaderboardSubmission({
       walletAddress: normalizedAddress,
@@ -361,32 +317,15 @@ router.post('/user',
 
     logger.info(`User data saved: ${normalizedAddress}`);
 
-    // NEW: Record blockchain session when user data is saved
-    let blockchainResult = null;
+    // Fire-and-forget — never block save response on a chain write
     if (blockchainService.isReady() && updatedUser.stats) {
-      try {
-        const sessionResult = await blockchainService.recordSession(
-          normalizedAddress, 
-          updatedUser.stats
-        );
-        
-        if (sessionResult && sessionResult.success) {
-          blockchainResult = {
-            success: true,
-            txHash: sessionResult.transactionHash,
-            blockNumber: sessionResult.blockNumber,
-            gasUsed: sessionResult.gasUsed,
-          };
-          logger.info(`✅ User data save - Blockchain session: ${sessionResult.transactionHash}`);
-        }
-      } catch (error) {
-        logger.error('Blockchain recording error during user save:', error);
-        blockchainResult = {
-          success: false,
-          error: error.message,
-        };
-      }
+      const statsSnap = { ...updatedUser.stats };
+      setImmediate(() => {
+        blockchainService.recordSession(normalizedAddress, statsSnap)
+          .catch(err => logger.warn(`[blockchain] recordSession wallet=${normalizedAddress}: ${err.message}`));
+      });
     }
+    const blockchainResult = blockchainService.isReady() ? { queued: true } : null;
 
     const daExtras = {};
     if (typeof req.body?.accuracy === 'number') daExtras.accuracy = req.body.accuracy;
@@ -715,6 +654,19 @@ router.get('/blockchain/stats', authenticate, async (req, res, next) => {
       success: true,
       data: stats || { totalUsers: 0, totalSessions: 0 },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/blockchain/history/:walletAddress', authenticate, async (req, res, next) => {
+  try {
+    const normalizedAddress = req.params.walletAddress.toLowerCase();
+    if (!blockchainService.isReady()) {
+      return res.status(503).json({ success: false, error: 'Blockchain service not available' });
+    }
+    const history = await blockchainService.getSessionHistory(normalizedAddress);
+    res.json({ success: true, data: history, count: history.length });
   } catch (error) {
     next(error);
   }

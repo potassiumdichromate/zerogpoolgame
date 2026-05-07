@@ -165,6 +165,24 @@ class BlockchainService {
     }
   }
 
+  async getSessionHistory(walletAddress, limit = 20) {
+    if (!this.isInitialized) return [];
+    try {
+      const filter = this.contract.filters.SessionRecorded(walletAddress);
+      const events = await this.contract.queryFilter(filter, -100000);
+      return events.slice(-limit).reverse().map(e => ({
+        loginCount:         Number(e.args.loginCount),
+        timestamp:          Number(e.args.timestamp),
+        totalBallsPocketed: Number(e.args.totalBallsPocketed),
+        txHash:             e.transactionHash,
+        blockNumber:        e.blockNumber,
+      }));
+    } catch (err) {
+      logger.error('Failed to get session history:', err);
+      return [];
+    }
+  }
+
   async getBlockchainStats() {
     if (!this.isInitialized) {
       return null;

@@ -1,7 +1,7 @@
 'use strict';
 const { randomUUID } = require('crypto');
 const logger = require('../utils/logger');
-const { getZerogConfig } = require('./zerogComputeService');
+const { callCompute } = require('./zerogComputeService');
 
 const SUSPICIOUS_BALLS_DELTA = Math.max(
   Number(process.env.ZEROG_ANTICHEAT_SUSPICIOUS_DELTA || 500),
@@ -50,9 +50,6 @@ function classifySuspicion(prevStats = {}, nextStats = {}) {
 }
 
 async function verifyWith0gCompute(payload) {
-  const zg = getZerogConfig();
-  if (!zg.apiKey) return { verdict: 'allow', source: 'rules_only', reason: 'missing_api_key' };
-
   // validationId binding — model must echo it back to prove it saw this exact payload.
   // Prevents result replay attacks (reusing a past CLEAN verdict for a different save).
   const validationId = randomUUID();
@@ -65,81 +62,64 @@ async function verifyWith0gCompute(payload) {
     'Reject impossible or highly implausible stat jumps.',
   ].join('\n');
 
-  const started = Date.now();
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user',   content: JSON.stringify({ validationId, ...payload }) },
+  ];
+
+  const result = await callCompute(messages, {
+    model:     process.env.ZEROG_ANTICHEAT_MODEL,
+    temperature: 0.0,
+    maxTokens: 150,
+    timeoutMs: Number(process.env.ZEROG_ANTICHEAT_TIMEOUT_MS || 8000),
+  });
+
+  if (!result.ok) {
+    return { verdict: 'allow', source: '0g_compute_error', reason: result.reason };
+  }
+
+  const text = result.text;
+  if (!text) return { verdict: 'allow', source: '0g_compute_error', reason: 'empty_output' };
+
+  let parsed;
   try {
-    const response = await fetch(`${zg.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${zg.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: process.env.ZEROG_ANTICHEAT_MODEL || zg.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user',   content: JSON.stringify({ validationId, ...payload }) },
-        ],
-        temperature: 0.0,
-        max_tokens: 150,
-        stream: false,
-        verify_tee: true,
-        provider: { sort: process.env.ZEROG_COMPUTE_ROUTING || 'latency' },
-      }),
-      signal: AbortSignal.timeout(Number(process.env.ZEROG_ANTICHEAT_TIMEOUT_MS || 8000)),
-    });
-
-    if (!response.ok) {
-      return { verdict: 'allow', source: '0g_compute_error', reason: `http_${response.status}` };
-    }
-
-    const body = await response.json().catch(() => null);
-    const trace       = body?.x_0g_trace || {};
-    const teeVerified = trace.tee_verified === true;
-    const text        = body?.choices?.[0]?.message?.content;
-
-    if (typeof text !== 'string') {
-      return { verdict: 'allow', source: '0g_compute_error', reason: 'empty_output' };
-    }
-
     const jsonStart = text.indexOf('{');
     const jsonEnd   = text.lastIndexOf('}');
-    const parsed    =
-      jsonStart >= 0 && jsonEnd > jsonStart
-        ? JSON.parse(text.slice(jsonStart, jsonEnd + 1))
-        : JSON.parse(text);
-
-    // Binding check — reject if model didn't echo our validationId back
-    if (parsed?.validationId !== validationId) {
-      logger.warn('[0g-anti-cheat] validationId binding violation — response discarded', {
-        expected: validationId,
-        got: parsed?.validationId,
-      });
-      return { verdict: 'allow', source: '0g_compute_error', reason: 'binding_violation' };
-    }
-
-    const verdict    = parsed?.verdict === 'reject' ? 'reject' : 'allow';
-    const confidence = Number(parsed?.confidence);
-
-    logger.info('[0g-anti-cheat] tee_verified compute result', {
-      verdict,
-      teeVerified,
-      providerAddress: trace.provider || null,
-      latencyMs: Date.now() - started,
-    });
-
-    return {
-      verdict,
-      source:          '0g_compute',
-      confidence:      Number.isFinite(confidence) ? confidence : null,
-      reason:          typeof parsed?.reason === 'string' ? parsed.reason : 'n/a',
-      teeVerified,
-      providerAddress: trace.provider || null,
-      latencyMs:       Date.now() - started,
-    };
-  } catch (err) {
-    logger.warn(`[0g-anti-cheat] compute validation failed: ${err.message}`);
-    return { verdict: 'allow', source: '0g_compute_error', reason: err.message };
+    parsed = jsonStart >= 0 && jsonEnd > jsonStart
+      ? JSON.parse(text.slice(jsonStart, jsonEnd + 1))
+      : JSON.parse(text);
+  } catch {
+    return { verdict: 'allow', source: '0g_compute_error', reason: 'parse_error' };
   }
+
+  // Binding check — reject if model didn't echo our validationId back
+  if (parsed?.validationId !== validationId) {
+    logger.warn('[0g-anti-cheat] validationId binding violation — response discarded', {
+      expected: validationId,
+      got: parsed?.validationId,
+    });
+    return { verdict: 'allow', source: '0g_compute_error', reason: 'binding_violation' };
+  }
+
+  const verdict    = parsed?.verdict === 'reject' ? 'reject' : 'allow';
+  const confidence = Number(parsed?.confidence);
+
+  logger.info('[0g-anti-cheat] tee_verified compute result', {
+    verdict,
+    teeVerified: result.teeVerified,
+    providerAddress: result.providerAddress,
+    latencyMs: result.latencyMs,
+  });
+
+  return {
+    verdict,
+    source:          '0g_compute',
+    confidence:      Number.isFinite(confidence) ? confidence : null,
+    reason:          typeof parsed?.reason === 'string' ? parsed.reason : 'n/a',
+    teeVerified:     result.teeVerified,
+    providerAddress: result.providerAddress,
+    latencyMs:       result.latencyMs,
+  };
 }
 
 async function evaluateLeaderboardSubmission({ walletAddress, previousStats, nextStats }) {

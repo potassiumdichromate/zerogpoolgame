@@ -44,7 +44,62 @@ const getZerogConfig = () => ({
   timeoutMs: Number(process.env.ZEROG_TIMEOUT_MS || 8000),
 });
 
+/**
+ * Shared 0G Compute client — single place for fetch + trace extraction.
+ * @param {Array} messages
+ * @param {{ model?: string, temperature?: number, maxTokens?: number, timeoutMs?: number, routing?: string }} opts
+ */
+async function callCompute(messages, opts = {}) {
+  const cfg = getZerogConfig();
+  if (!cfg.apiKey) return { ok: false, reason: 'missing_api_key' };
+
+  const model = opts.model || cfg.model;
+  const temperature = opts.temperature ?? 0.3;
+  const maxTokens = opts.maxTokens || 256;
+  const timeoutMs = opts.timeoutMs || cfg.timeoutMs || 8000;
+  const started = Date.now();
+
+  try {
+    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        stream: false,
+        verify_tee: true,
+        provider: { sort: opts.routing || process.env.ZEROG_COMPUTE_ROUTING || 'latency' },
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    const latencyMs = Date.now() - started;
+    if (!res.ok) return { ok: false, reason: `http_${res.status}`, latencyMs };
+
+    const payload = await res.json().catch(() => null);
+    const trace = payload?.x_0g_trace || {};
+    const text = typeof payload?.choices?.[0]?.message?.content === 'string'
+      ? payload.choices[0].message.content
+      : '';
+
+    return {
+      ok: true,
+      text,
+      teeVerified: trace.tee_verified === true,
+      providerAddress: trace.provider || null,
+      usage: payload?.usage || null,
+      latencyMs,
+    };
+  } catch (err) {
+    const latencyMs = Date.now() - started;
+    return { ok: false, reason: err.message, latencyMs };
+  }
+}
+
 module.exports = {
   getZerogConfig,
+  callCompute,
   poolPlayerForAi,
 };
