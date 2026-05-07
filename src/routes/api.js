@@ -362,7 +362,7 @@ router.get('/user', authenticate, validateWalletAddress, async (req, res, next) 
 });
 
 // POST /api/user - Save user data (kept for backward compatibility)
-router.post('/user', /*authenticate, validateWalletAddress, validateUserData,*/ async (req, res, next) => {
+router.post('/user', authenticate, validateWalletAddress, validateUserData, async (req, res, next) => {
   try {
     const { walletAddress, ...userData } = req.body;
     const normalizedAddress = walletAddress.toLowerCase();
