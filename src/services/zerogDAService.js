@@ -149,6 +149,40 @@ const submitStatsUpdate = (walletAddress, userDoc, extras = {}) =>
 const submitNameUpdate = (walletAddress, newName) =>
   submitEvent('player.name', walletAddress, buildNameData(walletAddress, newName));
 
+const submitMatchCompleted = (walletAddress, matchData = {}) =>
+  submitEvent('pool.match.completed', walletAddress, {
+    walletAddress,
+    matchId:   matchData.matchId  || randomUUID(),
+    score:     matchData.score    ?? 0,
+    accuracy:  matchData.accuracy ?? null,
+    mode:      matchData.mode     || 'casual',
+    won:       matchData.won      ?? false,
+    opponent:  matchData.opponent || 'cpu',
+    duration:  matchData.duration ?? null,
+    latency:   matchData.latency  ?? null,
+    recordedAt: new Date().toISOString(),
+  });
+
+const submitScoreUpdate = (walletAddress, scoreData = {}) =>
+  submitEvent('pool.score.updated', walletAddress, {
+    walletAddress,
+    totalBallsPocketed: scoreData.totalBallsPocketed ?? 0,
+    ttBestScore:        scoreData.ttBestScore        ?? 0,
+    matrixBestScore:    scoreData.matrixBestScore    ?? 0,
+    delta:              scoreData.delta              ?? null,
+    recordedAt: new Date().toISOString(),
+  });
+
+const submitSkillUpdate = (walletAddress, intelligence = {}) =>
+  submitEvent('pool.skill.updated', walletAddress, {
+    walletAddress,
+    skillLevel:    intelligence.skillLevel    || 'Beginner',
+    playStyle:     intelligence.playStyle     || 'balanced',
+    reactionSpeed: intelligence.reactionSpeed || 'average',
+    consistency:   intelligence.consistency   ?? 50,
+    recordedAt: new Date().toISOString(),
+  });
+
 const submitPlayerSave = (walletAddress, userDoc, trigger = 'player.save') => {
   const o = userDoc?.toObject ? userDoc.toObject() : { ...userDoc };
   return submitEvent('player.save', walletAddress, {
@@ -249,12 +283,14 @@ module.exports = {
   submitStatsUpdate,
   submitNameUpdate,
   submitPlayerSave,
+  submitMatchCompleted,
+  submitScoreUpdate,
+  submitSkillUpdate,
   getEventStatus,
   retrievePlayerEvent,
   healthCheck,
   getGatewayBaseUrl,
   getDebugSummary,
-  // kept for backward compat
   submitPlayerEvent: (eventName, walletAddress, userDoc) =>
     submitEvent(eventName, walletAddress, buildLoginData(walletAddress, userDoc)),
 };

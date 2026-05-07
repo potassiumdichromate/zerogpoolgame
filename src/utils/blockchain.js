@@ -9,9 +9,7 @@ class BlockchainService {
     this.isInitialized = false;
   }
 
-  /**
-   * Initialize the blockchain service
-   */
+ 
   async initialize() {
     try {
       // Check if required env variables are set
@@ -65,12 +63,6 @@ class BlockchainService {
     }
   }
 
-  /**
-   * Record a user login session on the blockchain
-   * @param {string} walletAddress - User's wallet address
-   * @param {Object} stats - User's game statistics
-   * @returns {Promise<Object>} Transaction receipt
-   */
   async recordSession(walletAddress, stats) {
     if (!this.isInitialized) {
       logger.warn('Blockchain service not initialized. Skipping session recording.');
@@ -131,11 +123,6 @@ class BlockchainService {
     }
   }
 
-  /**
-   * Get user's login count from blockchain
-   * @param {string} walletAddress - User's wallet address
-   * @returns {Promise<number>} Login count
-   */
   async getUserLoginCount(walletAddress) {
     if (!this.isInitialized) {
       return null;
@@ -150,11 +137,6 @@ class BlockchainService {
     }
   }
 
-  /**
-   * Get user's latest session from blockchain
-   * @param {string} walletAddress - User's wallet address
-   * @returns {Promise<Object>} Latest session data
-   */
   async getLatestSession(walletAddress) {
     if (!this.isInitialized) {
       return null;
@@ -183,10 +165,6 @@ class BlockchainService {
     }
   }
 
-  /**
-   * Get blockchain statistics
-   * @returns {Promise<Object>} Total users and sessions
-   */
   async getBlockchainStats() {
     if (!this.isInitialized) {
       return null;
@@ -206,16 +184,11 @@ class BlockchainService {
     }
   }
 
-  /**
-   * Check if blockchain service is ready
-   * @returns {boolean}
-   */
   isReady() {
     return this.isInitialized;
   }
 }
 
-// Create singleton instance
 const blockchainService = new BlockchainService();
 
 module.exports = blockchainService;

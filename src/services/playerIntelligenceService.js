@@ -31,16 +31,23 @@ function classifyPlayStyle({ ballsPerGame, winRatio }) {
 
 function classifyReactionSpeed({ totalGamesPlayed, totalTimePlayed }) {
   if (totalGamesPlayed <= 0 || totalTimePlayed <= 0) return 'average';
-  // Higher games per minute → faster cadence; rough proxy until per-shot timing exists.
   const gamesPerMinute = totalGamesPlayed / Math.max(totalTimePlayed, 1);
   if (gamesPerMinute >= 0.25) return 'fast';
   if (gamesPerMinute <= 0.05) return 'slow';
   return 'average';
 }
 
+function calcConsistency({ totalGamesPlayed, winRatio }) {
+  if (totalGamesPlayed < 3) return 50;
+  // Scale win ratio to 0-100; boost for high game count (proven sample)
+  const base = Math.round(winRatio * 100);
+  const sampleBonus = Math.min(10, Math.floor(totalGamesPlayed / 10));
+  return Math.min(100, Math.max(0, base + sampleBonus));
+}
+
 /**
  * @param {object} stats raw user `stats` sub-document (or plain object)
- * @returns {{ skillLevel: string, playStyle: string, reactionSpeed: string }}
+ * @returns {{ skillLevel, playStyle, reactionSpeed, consistency }}
  */
 function derivePlayerIntelligence(stats = {}) {
   const wonCpu = toNum(stats.totalGamesWonVsCPU);
@@ -55,9 +62,10 @@ function derivePlayerIntelligence(stats = {}) {
   const ballsPerGame = totalGamesPlayed > 0 ? totalBallsPocketed / totalGamesPlayed : 0;
 
   return {
-    skillLevel: classifySkillLevel({ totalGamesPlayed, winRatio, totalBallsPocketed }),
-    playStyle: classifyPlayStyle({ ballsPerGame, winRatio }),
+    skillLevel:    classifySkillLevel({ totalGamesPlayed, winRatio, totalBallsPocketed }),
+    playStyle:     classifyPlayStyle({ ballsPerGame, winRatio }),
     reactionSpeed: classifyReactionSpeed({ totalGamesPlayed, totalTimePlayed }),
+    consistency:   calcConsistency({ totalGamesPlayed, winRatio }),
   };
 }
 

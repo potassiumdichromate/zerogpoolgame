@@ -182,4 +182,144 @@ Return JSON: {"insight": "your sentence"}`,
   };
 }
 
-module.exports = { getPoolShotCoaching, getPoolPerformanceInsight };
+/**
+ * Post-match AI analysis: feedback + next difficulty recommendation.
+ * Powered by 0G Compute (TEE-verified).
+ */
+async function getMatchAnalysis(matchData, playerStats) {
+  const messages = [
+    {
+      role: 'system',
+      content: 'Output only strict JSON. No markdown.',
+    },
+    {
+      role: 'user',
+      content: `You are a ZeroGPool match analyst running on 0G Compute (TEE-verified).
+
+Match result:
+${JSON.stringify({
+  score:    matchData.score    ?? 0,
+  accuracy: matchData.accuracy ?? null,
+  won:      matchData.won      ?? false,
+  mode:     matchData.mode     || 'casual',
+  opponent: matchData.opponent || 'cpu',
+  duration: matchData.duration ?? null,
+}, null, 2)}
+
+Career stats:
+${JSON.stringify({
+  totalBallsPocketed:      playerStats.totalBallsPocketed      || 0,
+  totalGamesPlayedVsCPU:   playerStats.totalGamesPlayedVsCPU   || 0,
+  totalGamesWonVsCPU:      playerStats.totalGamesWonVsCPU      || 0,
+  totalGamesPlayedVsHuman: playerStats.totalGamesPlayedVsHuman || 0,
+  totalGamesWonVsHuman:    playerStats.totalGamesWonVsHuman    || 0,
+  ttBestScore:             playerStats.ttBestScore             || 0,
+  matrixBestScore:         playerStats.matrixBestScore         || 0,
+}, null, 2)}
+
+Return JSON:
+{
+  "feedback": "one sentence on this match performance",
+  "strength": "one identified strength",
+  "weakness": "one area to improve",
+  "nextDifficulty": "easy|medium|hard|expert",
+  "confidenceScore": 0.0-1.0
+}`,
+    },
+  ];
+
+  const result = await callCompute(messages, 200);
+  if (!result.ok) return { ok: false, reason: result.reason };
+
+  const parsed = parseJson(result.text);
+  if (!parsed?.feedback || !parsed?.nextDifficulty) {
+    logger.warn('[0g-pool-analysis] match_analysis invalid output');
+    return { ok: false, reason: 'invalid_output' };
+  }
+
+  logger.info('[0g-pool-analysis] match_analysis_success', {
+    teeVerified: result.teeVerified,
+    latencyMs: result.latencyMs,
+    nextDifficulty: parsed.nextDifficulty,
+  });
+
+  return {
+    ok: true,
+    feedback:        parsed.feedback,
+    strength:        parsed.strength        || null,
+    weakness:        parsed.weakness        || null,
+    nextDifficulty:  parsed.nextDifficulty,
+    confidenceScore: parsed.confidenceScore ?? null,
+    provider:        '0g_compute',
+    teeVerified:     result.teeVerified,
+    providerAddress: result.providerAddress,
+  };
+}
+
+/**
+ * Difficulty tuning recommendation based on career profile.
+ * Powered by 0G Compute (TEE-verified).
+ */
+async function getDifficultyTuning(playerStats) {
+  const totalGames =
+    (playerStats.totalGamesPlayedVsCPU   || 0) +
+    (playerStats.totalGamesPlayedVsHuman || 0);
+  const totalWins =
+    (playerStats.totalGamesWonVsCPU   || 0) +
+    (playerStats.totalGamesWonVsHuman || 0);
+  const winRatio = totalGames > 0 ? (totalWins / totalGames).toFixed(3) : '0.000';
+
+  const messages = [
+    {
+      role: 'system',
+      content: 'Output only strict JSON. No markdown.',
+    },
+    {
+      role: 'user',
+      content: `You are a difficulty tuning engine for ZeroGPool on 0G blockchain.
+
+Player profile:
+- Total games: ${totalGames}
+- Win ratio: ${winRatio}
+- Balls pocketed: ${playerStats.totalBallsPocketed || 0}
+- Time trial best: ${playerStats.ttBestScore || 0}
+- Matrix best: ${playerStats.matrixBestScore || 0}
+
+Recommend optimal difficulty settings to keep the player challenged but not frustrated.
+Return JSON:
+{
+  "recommendedDifficulty": "easy|medium|hard|expert",
+  "cpuSkillLevel": 1-10,
+  "reasoning": "one sentence",
+  "shouldIntroducePvP": true|false
+}`,
+    },
+  ];
+
+  const result = await callCompute(messages, 150);
+  if (!result.ok) return { ok: false, reason: result.reason };
+
+  const parsed = parseJson(result.text);
+  if (!parsed?.recommendedDifficulty) {
+    logger.warn('[0g-pool-analysis] difficulty_tuning invalid output');
+    return { ok: false, reason: 'invalid_output' };
+  }
+
+  logger.info('[0g-pool-analysis] difficulty_tuning_success', {
+    teeVerified: result.teeVerified,
+    recommended: parsed.recommendedDifficulty,
+  });
+
+  return {
+    ok: true,
+    recommendedDifficulty: parsed.recommendedDifficulty,
+    cpuSkillLevel:         parsed.cpuSkillLevel         ?? null,
+    reasoning:             parsed.reasoning             || null,
+    shouldIntroducePvP:    parsed.shouldIntroducePvP    ?? false,
+    provider:              '0g_compute',
+    teeVerified:           result.teeVerified,
+    providerAddress:       result.providerAddress,
+  };
+}
+
+module.exports = { getPoolShotCoaching, getPoolPerformanceInsight, getMatchAnalysis, getDifficultyTuning };

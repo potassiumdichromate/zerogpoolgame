@@ -101,17 +101,21 @@ const userDataSchema = new mongoose.Schema({
     checkedAt: { type: Date, default: null },
   },
 
+
   /**
-   * On-chain anchor — links DA eventId + stats hash to 0G EVM block.
-   * Cross-layer proof: Storage (Merkle) → DA (BLS) → Chain (block-timestamped).
+   * Player intelligence profile — derived from stats, updated on every match.
+   * Stored so it can be served without re-computing and submitted to 0G DA
+   * as a pool.skill.updated event showing skill progression over time.
    */
-  chainAnchor: {
-    txHash:      { type: String, default: null },
-    blockNumber: { type: Number, default: null },
-    daEventId:   { type: String, default: null },
-    statsHash:   { type: String, default: null },
-    anchoredAt:  { type: Date,   default: null },
+  playerMemory: {
+    skillLevel:    { type: String, default: null },
+    playStyle:     { type: String, default: null },
+    reactionSpeed: { type: String, default: null },
+    consistency:   { type: Number, default: null },
+    updatedAt:     { type: Date,   default: null },
   },
+  
+  
 }, {
   timestamps: true,
   versionKey: false,

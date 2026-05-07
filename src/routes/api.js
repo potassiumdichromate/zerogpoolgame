@@ -34,16 +34,14 @@ const commentLimiter = rateLimit({
 });
 const zerogDAService = require('../services/zerogDAService');
 const { generatePoolLeaderboardComment } = require('../services/aiPoolCommentService');
-const { getPoolShotCoaching, getPoolPerformanceInsight } = require('../services/poolComputeAnalysis');
-const zerogChainService = require('../services/zerogChainService');
+const { getPoolShotCoaching, getPoolPerformanceInsight, getMatchAnalysis, getDifficultyTuning } = require('../services/poolComputeAnalysis');
 const { evaluateLeaderboardSubmission } = require('../services/leaderboardAntiCheatService');
 const { derivePlayerIntelligence } = require('../services/playerIntelligenceService');
 
 router.use('/game', require('./gameWebglManifest'));
 
 // 0G DA: fire-and-forget — never blocks the API response.
-// onCommitted(eventId) is called after the eventId is stored — use it to anchor on-chain.
-const queueDA = (trigger, eventType, userId, walletAddress, submitFn, onCommitted = null) => {
+const queueDA = (trigger, eventType, userId, walletAddress, submitFn) => {
   setImmediate(async () => {
     try {
       const result = await submitFn();
@@ -62,11 +60,6 @@ const queueDA = (trigger, eventType, userId, walletAddress, submitFn, onCommitte
         });
       }
       logger.info(`[0g-da] queued | event=${eventType} trigger=${trigger} wallet=${walletAddress} eventId=${result.eventId}`);
-      if (onCommitted) {
-        setImmediate(() => onCommitted(result.eventId).catch(err =>
-          logger.warn(`[0g-chain] onCommitted error | trigger=${trigger}: ${err.message}`)
-        ));
-      }
     } catch (err) {
       logger.warn(`[0g-da] background error | trigger=${trigger}: ${err.message}`);
     }
@@ -162,30 +155,10 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
       }
     }
 
-    const loginStatsHash = crypto.createHash('sha256')
-      .update(JSON.stringify(userData.stats || {}))
-      .digest('hex');
     const loginUserId = userData._id;
 
     queueDA('login.auth', 'session.login', loginUserId, normalizedAddress,
       () => zerogDAService.submitLoginEvent(normalizedAddress, userData),
-      async (eventId) => {
-        const anchor = await zerogChainService.anchorSession(normalizedAddress, eventId, loginStatsHash);
-        if (anchor) {
-          await UserData.findByIdAndUpdate(loginUserId, {
-            $set: {
-              chainAnchor: {
-                txHash:      anchor.txHash,
-                blockNumber: anchor.blockNumber,
-                daEventId:   eventId,
-                statsHash:   loginStatsHash,
-                anchoredAt:  anchor.anchoredAt,
-              },
-            },
-          });
-          logger.info(`[0g-chain] login anchor stored wallet=${normalizedAddress} tx=${anchor.txHash}`);
-        }
-      }
     );
 
     res.json({
@@ -271,30 +244,10 @@ router.post('/v2/login', decodeBrowserJwtOptional, async (req, res, next) => {
       }
     }
 
-    const v2StatsHash = crypto.createHash('sha256')
-      .update(JSON.stringify(userData.stats || {}))
-      .digest('hex');
     const v2UserId = userData._id;
 
     queueDA('login.v2', 'session.login', v2UserId, normalizedAddress,
       () => zerogDAService.submitLoginEvent(normalizedAddress, userData),
-      async (eventId) => {
-        const anchor = await zerogChainService.anchorSession(normalizedAddress, eventId, v2StatsHash);
-        if (anchor) {
-          await UserData.findByIdAndUpdate(v2UserId, {
-            $set: {
-              chainAnchor: {
-                txHash:      anchor.txHash,
-                blockNumber: anchor.blockNumber,
-                daEventId:   eventId,
-                statsHash:   v2StatsHash,
-                anchoredAt:  anchor.anchoredAt,
-              },
-            },
-          });
-          logger.info(`[0g-chain] v2 login anchor stored wallet=${normalizedAddress} tx=${anchor.txHash}`);
-        }
-      }
     );
 
     res.json({
@@ -912,54 +865,6 @@ router.get('/da/health', authenticate, async (req, res, next) => {
   }
 });
 
-// GET /api/da/anchor?wallet=0x…
-// Returns the on-chain anchor linking DA eventId + stats hash to 0G EVM block.
-router.get('/da/anchor', authenticate, async (req, res, next) => {
-  try {
-    const wallet = req.query.wallet;
-    if (!wallet || typeof wallet !== 'string') {
-      return res.status(400).json({ success: false, error: "Missing 'wallet' query parameter" });
-    }
-    const normalizedAddress = wallet.toLowerCase().trim();
-    const user = await UserData.findOne({ walletAddress: normalizedAddress }).select('chainAnchor daSnapshot');
-    if (!user) {
-      return res.status(404).json({ success: false, error: 'User not found' });
-    }
-
-    const anchor = user.chainAnchor;
-    if (!anchor?.txHash) {
-      return res.json({
-        success: true,
-        anchored: false,
-        chainEnabled: zerogChainService.isEnabled(),
-        message: zerogChainService.isEnabled()
-          ? 'No on-chain anchor yet — anchor is written on next login'
-          : 'Chain anchoring not configured (ZG_POOL_ANCHOR_ADDRESS not set)',
-      });
-    }
-
-    res.json({
-      success:  true,
-      anchored: true,
-      anchor: {
-        txHash:      anchor.txHash,
-        blockNumber: anchor.blockNumber,
-        daEventId:   anchor.daEventId,
-        statsHash:   anchor.statsHash,
-        anchoredAt:  anchor.anchoredAt,
-        explorerUrl: `https://chainscan.0g.ai/tx/${anchor.txHash}`,
-      },
-      proof: {
-        daEventId:        anchor.daEventId,
-        daGatewayUrl:     `${zerogDAService.getGatewayBaseUrl()}/v1/da/status/${anchor.daEventId}`,
-        onChainTx:        anchor.txHash,
-        description: 'DA blob dispersed + BLS-signed → anchored on 0G EVM chain with block timestamp',
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-});
 
 // ==================== 0G COMPUTE ANALYSIS ====================
 
@@ -1024,6 +929,173 @@ router.get('/player/insight', computeLimiter, authenticate, async (req, res, nex
         teeVerified: result.teeVerified,
         providerAddress: result.providerAddress ?? null,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==================== MATCH + 0G PROOF ENDPOINTS ====================
+
+// POST /api/player/match
+// Game client calls this after every match. Submits pool.match.completed to 0G DA,
+// runs TEE-verified post-match analysis via 0G Compute, updates playerMemory.
+router.post('/player/match', computeLimiter, authenticate, async (req, res, next) => {
+  try {
+    const { score, accuracy, mode, won, opponent, duration, latency, matchId } = req.body;
+    const wallet = req.walletAddress;
+
+    const user = await UserData.findOne({ walletAddress: wallet }).select('stats playerMemory _id');
+    if (!user) return res.status(404).json({ success: false, error: 'Player not found' });
+
+    const intelligence = derivePlayerIntelligence(user.stats || {});
+
+    // Persist updated playerMemory
+    await UserData.findByIdAndUpdate(user._id, {
+      $set: {
+        playerMemory: { ...intelligence, updatedAt: new Date() },
+      },
+    });
+
+    const matchData = { score, accuracy, mode, won, opponent, duration, latency, matchId };
+
+    // Fire DA events non-blocking
+    queueDA('match.completed', 'pool.match.completed', user._id, wallet,
+      () => zerogDAService.submitMatchCompleted(wallet, matchData));
+
+    queueDA('match.completed', 'pool.score.updated', user._id, wallet,
+      () => zerogDAService.submitScoreUpdate(wallet, {
+        totalBallsPocketed: user.stats?.totalBallsPocketed,
+        ttBestScore:        user.stats?.ttBestScore,
+        matrixBestScore:    user.stats?.matrixBestScore,
+        delta:              score ?? null,
+      }));
+
+    queueDA('match.completed', 'pool.skill.updated', user._id, wallet,
+      () => zerogDAService.submitSkillUpdate(wallet, intelligence));
+
+    // 0G Compute: post-match analysis (non-blocking, returned in response if fast enough)
+    let analysis = null;
+    try {
+      const r = await getMatchAnalysis(matchData, user.stats || {});
+      if (r.ok) analysis = r;
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      intelligence,
+      analysis: analysis
+        ? {
+            feedback:       analysis.feedback,
+            strength:       analysis.strength,
+            weakness:       analysis.weakness,
+            nextDifficulty: analysis.nextDifficulty,
+            teeVerified:    analysis.teeVerified,
+          }
+        : null,
+      _meta: { provider: '0g_compute', daEvents: ['pool.match.completed', 'pool.score.updated', 'pool.skill.updated'] },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/0g/proof/:wallet
+// Returns the full cross-layer 0G proof for a wallet:
+// DA event → on-chain anchor → stats hash. Verifiable by anyone.
+router.get('/0g/proof/:wallet', async (req, res, next) => {
+  try {
+    const wallet = req.params.wallet?.toLowerCase().trim();
+    if (!wallet) return res.status(400).json({ success: false, error: 'Missing wallet' });
+
+    const user = await UserData.findOne({ walletAddress: wallet })
+      .select('daSnapshot antiCheatSnapshot stats playerMemory');
+    if (!user) return res.status(404).json({ success: false, error: 'Player not found' });
+
+    const da = user.daSnapshot;
+
+    res.json({
+      success: true,
+      wallet,
+      proof: {
+        layer1_da: da?.eventId
+          ? {
+              eventId:     da.eventId,
+              eventType:   da.eventType,
+              daStatus:    da.daStatus,
+              verifyUrl:   `${zerogDAService.getGatewayBaseUrl()}/v1/da/status/${da.eventId}`,
+              submittedAt: da.snapshotAt,
+            }
+          : null,
+        layer2_anticheat: {
+          accepted:  user.antiCheatSnapshot?.accepted  ?? null,
+          source:    user.antiCheatSnapshot?.source    ?? null,
+          checkedAt: user.antiCheatSnapshot?.checkedAt ?? null,
+        },
+      },
+      description: 'DA blob (BLS-signed) → TEE anti-cheat verdict',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/0g/player-memory/:wallet
+// Returns player intelligence profile + skill evolution stored on 0G DA.
+router.get('/0g/player-memory/:wallet', async (req, res, next) => {
+  try {
+    const wallet = req.params.wallet?.toLowerCase().trim();
+    if (!wallet) return res.status(400).json({ success: false, error: 'Missing wallet' });
+
+    const user = await UserData.findOne({ walletAddress: wallet })
+      .select('stats playerMemory daEvents playerData');
+    if (!user) return res.status(404).json({ success: false, error: 'Player not found' });
+
+    // Always return a fresh intelligence reading alongside the stored snapshot
+    const fresh = derivePlayerIntelligence(user.stats || {});
+
+    // Pull only skill/match DA events from history
+    const skillEvents = (user.daEvents || [])
+      .filter(e => ['pool.skill.updated', 'pool.match.completed', 'pool.score.updated'].includes(e.eventType))
+      .slice(-20)
+      .map(e => ({ eventId: e.eventId, eventType: e.eventType, daStatus: e.daStatus, submittedAt: e.submittedAt }));
+
+    res.json({
+      success: true,
+      wallet,
+      playerName: user.playerData?.playerNames0 || 'Anonymous',
+      intelligence: {
+        current: fresh,
+        snapshot: user.playerMemory?.updatedAt ? user.playerMemory : null,
+      },
+      skillEvents,
+      _meta: { provider: '0g_da', eventsReturned: skillEvents.length },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/player/difficulty?wallet=0x…
+// TEE-verified difficulty recommendation based on career profile.
+router.get('/player/difficulty', computeLimiter, authenticate, async (req, res, next) => {
+  try {
+    const wallet = (req.query.wallet || req.walletAddress)?.toLowerCase().trim();
+    const user = await UserData.findOne({ walletAddress: wallet }).select('stats');
+    if (!user) return res.status(404).json({ success: false, error: 'Player not found' });
+
+    const result = await getDifficultyTuning(user.stats || {});
+    if (!result.ok) return res.json({ success: true, recommendation: null, _meta: { reason: result.reason } });
+
+    res.json({
+      success: true,
+      recommendation: {
+        difficulty:        result.recommendedDifficulty,
+        cpuSkillLevel:     result.cpuSkillLevel,
+        reasoning:         result.reasoning,
+        shouldIntroducePvP: result.shouldIntroducePvP,
+      },
+      _meta: { provider: result.provider, teeVerified: result.teeVerified, providerAddress: result.providerAddress ?? null },
     });
   } catch (error) {
     next(error);

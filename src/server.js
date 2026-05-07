@@ -9,7 +9,6 @@ const errorHandler = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
 const blockchainService   = require('./utils/blockchain');
 const zerogDAService      = require('./services/zerogDAService');
-const zerogChainService   = require('./services/zerogChainService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,7 +33,6 @@ zerogDAService.healthCheck().then((s) => {
   logger.info(`[0g-da] gateway ${s.gateway} online=${s.online}`);
 });
 
-logger.info(`[0g-chain] anchor service ${zerogChainService.isEnabled() ? 'ENABLED' : 'DISABLED — set ZG_POOL_ANCHOR_ADDRESS + ZG_PRIVATE_KEY to enable'}`);
 
 // ✅ Trust proxy (needed for Render)
 app.set('trust proxy', 1);
@@ -106,7 +104,6 @@ app.get('/', (req, res) => {
       storage:       'Merkle-verified via 0G Storage SDK (browser-side)',
       da:            `gateway online=${undefined}`,
       compute:       'TEE-verified inference (verify_tee: true)',
-      chain:         zerogChainService.isEnabled() ? `anchor enabled — chainId ${process.env.ZG_CHAIN_ID || 16600}` : 'disabled (set ZG_POOL_ANCHOR_ADDRESS)',
       sessionContract: blockchainService.isReady() ? 'enabled' : 'disabled',
     },
     endpoints: {
@@ -124,7 +121,6 @@ app.get('/', (req, res) => {
       daSnapshot:           'GET /api/da/snapshot?wallet=<address>',
       daStatus:             'GET /api/da/status?wallet=<address>',
       daRetrieve:           'GET /api/da/retrieve?wallet=<address>',
-      daAnchor:             'GET /api/da/anchor?wallet=<address> — cross-layer proof (DA + chain)',
       daHealth:             'GET /api/da/health',
       webglManifest:        'GET /api/game/webgl-manifest',
       storageIndexerHealth: 'GET /api/game/storage-indexer-health',
