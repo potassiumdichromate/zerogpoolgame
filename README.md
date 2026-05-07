@@ -24,7 +24,7 @@ Player data is dispersed to **0G DA** (BLS-signed), analyzed by **0G Compute** (
 - Joi validation, Winston logging
 - Helmet, compression, rate limiting, CORS
 - Privy-compatible JWT auth (browser + embedded wallet)
-- Blockchain session recorder (EVM session contract, optional)
+- EVM session contract — every login and score delta anchored on 0G EVM
 
 ---
 
@@ -52,16 +52,16 @@ See `.env.example` for the full list. Minimum required:
 | `ZEROG_API_KEY` | 0G Compute key (from pc.0g.ai) |
 | `ZEROG_BASE_URL` | `https://router-api.0g.ai/v1` |
 
-Optional (degrade gracefully if unset):
+0G Pipeline (all layers active in production):
 
 | Key | Purpose |
 |-----|---------|
-| `ZEROG_DA_GATEWAY_URL` | DA gateway for event blobs |
-| `ZEROG_DA_ENABLED` | `true` to enable DA submission |
-| `BLOCKCHAIN_RPC_URL` | EVM RPC for session contract |
-| `OPERATOR_PRIVATE_KEY` | Operator wallet for session recording |
-| `CONTRACT_ADDRESS` | Deployed session contract address |
-| `GAME_WEBGL_CDN_BASE_URL` | CDN origin for WebGL static files |
+| `ZEROG_DA_GATEWAY_URL` | 0G DA gateway endpoint — match results and skill snapshots are dispersed here |
+| `ZEROG_DA_ENABLED` | `true` — enables BLS-signed blob submission to 0G DA |
+| `BLOCKCHAIN_RPC_URL` | 0G EVM RPC — session contract reads and writes |
+| `OPERATOR_PRIVATE_KEY` | Operator wallet signing key — required for on-chain session recording |
+| `CONTRACT_ADDRESS` | Deployed `ZeroGPool` session contract address |
+| `GAME_WEBGL_CDN_BASE_URL` | 0G Storage CDN origin for Unity WebGL build delivery |
 
 ---
 
@@ -126,13 +126,13 @@ npm test      # node:test suite (manifest validation)
 | `GET` | `/api/da/status?wallet=` | Live DA status from gateway |
 | `GET` | `/api/da/retrieve?wallet=` | Retrieve DA blob |
 
-### Blockchain (optional)
+### 0G EVM — Session Contract
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| `GET` | `/api/blockchain/session/:wallet` | Latest on-chain session |
-| `GET` | `/api/blockchain/login-count/:wallet` | On-chain login count |
-| `GET` | `/api/blockchain/stats` | Total users + sessions on-chain |
+| `GET` | `/api/blockchain/session/:wallet` | Latest session anchored on 0G EVM |
+| `GET` | `/api/blockchain/login-count/:wallet` | Verified on-chain login count |
+| `GET` | `/api/blockchain/stats` | Total users and sessions recorded on-chain |
 
 ### WebGL / Storage
 
