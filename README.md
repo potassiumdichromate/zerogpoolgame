@@ -144,6 +144,12 @@ npm test      # node:test suite (manifest validation)
 
 ---
 
+## Deployment
+
+Deployed on 0G mainnet with live gameplay and verifiable usage across Storage, DA, Compute, and EVM.
+
+---
+
 ## Production Notes
 
 - Never commit `.env` — keep all secrets in server environment variables.
@@ -163,4 +169,4 @@ npm test      # node:test suite (manifest validation)
 | Stale game in browser | Bump manifest hashes after upload; clear IndexedDB `zerogpool-webgl-0g` |
 | Auth appears stale after logout | Clear client localStorage + reload |
 | DA events not submitting | Check `ZEROG_DA_GATEWAY_URL` is reachable from server egress |
-| Compute returning null tips | Check `ZEROG_API_KEY` is valid; fallback to Cloudflare Workers AI kicks in automatically |
+| Compute returning null tips | Verify `ZEROG_API_KEY` is valid and the 0G Compute endpoint is reachable — inference runs on 0G Compute (TEE), deployed on mainnet |
