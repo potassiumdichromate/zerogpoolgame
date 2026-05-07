@@ -248,7 +248,7 @@ router.get("/referral/stats", authenticate, async (req, res) => {
 
 // GET /api/user - Get or create user data (kept for backward compatibility)
 router.get('/user', 
-  authenticate, validateWalletAddress, 
+  // authenticate, validateWalletAddress, 
   async (req, res, next) => {
   try {
     const { walletAddress } = req.query;
@@ -273,7 +273,7 @@ router.get('/user',
 
 // POST /api/user - Save user data (kept for backward compatibility)
 router.post('/user',
-  authenticate, validateWalletAddress, validateUserData,
+  // authenticate, validateWalletAddress, validateUserData,
   async (req, res, next) => {
   try {
     const { walletAddress: bodyWallet, ...userData } = req.body;
