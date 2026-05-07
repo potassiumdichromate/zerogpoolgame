@@ -94,18 +94,30 @@ class BlockchainService {
 
       // Send transaction
       const tx = await this.contract.recordSession(walletAddress, statsTuple);
-      
+
       logger.info(`Transaction sent: ${tx.hash}`);
 
-      // Wait for confirmation (optional - you can return immediately if you want)
       const receipt = await tx.wait();
-      
-      logger.info(`Session recorded on blockchain. Block: ${receipt.blockNumber}, Gas used: ${receipt.gasUsed.toString()}`);
+
+      // Decode the SessionRecorded event from receipt logs to get on-chain loginCount
+      let onChainLoginCount = null;
+      try {
+        for (const log of receipt.logs) {
+          const parsed = this.contract.interface.parseLog(log);
+          if (parsed?.name === 'SessionRecorded') {
+            onChainLoginCount = Number(parsed.args.loginCount);
+            break;
+          }
+        }
+      } catch (_) {}
+
+      logger.info(`Session recorded on blockchain. Block: ${receipt.blockNumber}, Gas: ${receipt.gasUsed.toString()}, loginCount: ${onChainLoginCount}`);
 
       return {
         transactionHash: receipt.hash,
         blockNumber: receipt.blockNumber,
         gasUsed: receipt.gasUsed.toString(),
+        onChainLoginCount,
         success: true,
       };
     } catch (error) {

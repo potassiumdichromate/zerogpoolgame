@@ -12,18 +12,38 @@ const {
   validateStatsFilter,
   validateLeaderboardAiCommentQuery,
 } = require('../middleware/validation');
+const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const logger = require('../utils/logger');
 const blockchainService = require('../utils/blockchain');
+
+const computeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.ZEROG_COMPUTE_RATE_LIMIT || 20),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many compute requests — try again in 15 minutes.' },
+});
+
+const commentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number(process.env.ZEROG_COMMENT_RATE_LIMIT || 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many comment requests — try again shortly.' },
+});
 const zerogDAService = require('../services/zerogDAService');
 const { generatePoolLeaderboardComment } = require('../services/aiPoolCommentService');
+const { getPoolShotCoaching, getPoolPerformanceInsight } = require('../services/poolComputeAnalysis');
+const zerogChainService = require('../services/zerogChainService');
 const { evaluateLeaderboardSubmission } = require('../services/leaderboardAntiCheatService');
 const { derivePlayerIntelligence } = require('../services/playerIntelligenceService');
 
 router.use('/game', require('./gameWebglManifest'));
 
 // 0G DA: fire-and-forget — never blocks the API response.
-// submitFn must return Promise<{ eventId } | null>
-const queueDA = (trigger, eventType, userId, walletAddress, submitFn) => {
+// onCommitted(eventId) is called after the eventId is stored — use it to anchor on-chain.
+const queueDA = (trigger, eventType, userId, walletAddress, submitFn, onCommitted = null) => {
   setImmediate(async () => {
     try {
       const result = await submitFn();
@@ -42,6 +62,11 @@ const queueDA = (trigger, eventType, userId, walletAddress, submitFn) => {
         });
       }
       logger.info(`[0g-da] queued | event=${eventType} trigger=${trigger} wallet=${walletAddress} eventId=${result.eventId}`);
+      if (onCommitted) {
+        setImmediate(() => onCommitted(result.eventId).catch(err =>
+          logger.warn(`[0g-chain] onCommitted error | trigger=${trigger}: ${err.message}`)
+        ));
+      }
     } catch (err) {
       logger.warn(`[0g-da] background error | trigger=${trigger}: ${err.message}`);
     }
@@ -104,21 +129,19 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
 
     logger.info(`User logged in: ${normalizedAddress}`);
 
-    // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain (UPDATED - NOW AWAITS!)
+    // 🔗 BLOCKCHAIN INTEGRATION: Record session on-chain
     let blockchainResult = null;
     if (blockchainService.isReady()) {
       try {
-        // AWAIT the blockchain transaction to get the txHash
         const sessionResult = await blockchainService.recordSession(normalizedAddress, userData.stats);
-        
         if (sessionResult && sessionResult.success) {
           logger.info(`✅ Blockchain session recorded: ${sessionResult.transactionHash}`);
-          
           blockchainResult = {
             success: true,
             txHash: sessionResult.transactionHash,
             blockNumber: sessionResult.blockNumber,
             gasUsed: sessionResult.gasUsed,
+            onChainLoginCount: sessionResult.onChainLoginCount,
             blockchainEnabled: true,
           };
         } else {
@@ -128,12 +151,6 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
             error: sessionResult?.error || 'Unknown error',
             blockchainEnabled: true,
           };
-        }
-
-        // Also get login count
-        const loginCount = await blockchainService.getUserLoginCount(normalizedAddress);
-        if (loginCount !== null) {
-          blockchainResult.onChainLoginCount = loginCount;
         }
       } catch (error) {
         logger.error(`❌ Failed to record blockchain session for ${normalizedAddress}:`, error);
@@ -145,8 +162,31 @@ router.post('/auth/login', validateLogin, async (req, res, next) => {
       }
     }
 
-    queueDA('login.auth', 'session.login', userData._id, normalizedAddress,
-      () => zerogDAService.submitLoginEvent(normalizedAddress, userData));
+    const loginStatsHash = crypto.createHash('sha256')
+      .update(JSON.stringify(userData.stats || {}))
+      .digest('hex');
+    const loginUserId = userData._id;
+
+    queueDA('login.auth', 'session.login', loginUserId, normalizedAddress,
+      () => zerogDAService.submitLoginEvent(normalizedAddress, userData),
+      async (eventId) => {
+        const anchor = await zerogChainService.anchorSession(normalizedAddress, eventId, loginStatsHash);
+        if (anchor) {
+          await UserData.findByIdAndUpdate(loginUserId, {
+            $set: {
+              chainAnchor: {
+                txHash:      anchor.txHash,
+                blockNumber: anchor.blockNumber,
+                daEventId:   eventId,
+                statsHash:   loginStatsHash,
+                anchoredAt:  anchor.anchoredAt,
+              },
+            },
+          });
+          logger.info(`[0g-chain] login anchor stored wallet=${normalizedAddress} tx=${anchor.txHash}`);
+        }
+      }
+    );
 
     res.json({
       success: true,
@@ -204,22 +244,22 @@ router.post('/v2/login', decodeBrowserJwtOptional, async (req, res, next) => {
     if (blockchainService.isReady()) {
       try {
         const sessionResult = await blockchainService.recordSession(normalizedAddress, userData.stats);
-        
         if (sessionResult && sessionResult.success) {
           logger.info(`✅ Blockchain session recorded: ${sessionResult.transactionHash}`);
-          
           blockchainResult = {
             success: true,
             txHash: sessionResult.transactionHash,
             blockNumber: sessionResult.blockNumber,
             gasUsed: sessionResult.gasUsed,
+            onChainLoginCount: sessionResult.onChainLoginCount,
             blockchainEnabled: true,
           };
-        }
-
-        const loginCount = await blockchainService.getUserLoginCount(normalizedAddress);
-        if (loginCount !== null) {
-          blockchainResult.onChainLoginCount = loginCount;
+        } else {
+          blockchainResult = {
+            success: false,
+            error: sessionResult?.error || 'Transaction failed',
+            blockchainEnabled: true,
+          };
         }
       } catch (error) {
         logger.error(`❌ Failed to record blockchain session for ${normalizedAddress}:`, error);
@@ -231,8 +271,31 @@ router.post('/v2/login', decodeBrowserJwtOptional, async (req, res, next) => {
       }
     }
 
-    queueDA('login.v2', 'session.login', userData._id, normalizedAddress,
-      () => zerogDAService.submitLoginEvent(normalizedAddress, userData));
+    const v2StatsHash = crypto.createHash('sha256')
+      .update(JSON.stringify(userData.stats || {}))
+      .digest('hex');
+    const v2UserId = userData._id;
+
+    queueDA('login.v2', 'session.login', v2UserId, normalizedAddress,
+      () => zerogDAService.submitLoginEvent(normalizedAddress, userData),
+      async (eventId) => {
+        const anchor = await zerogChainService.anchorSession(normalizedAddress, eventId, v2StatsHash);
+        if (anchor) {
+          await UserData.findByIdAndUpdate(v2UserId, {
+            $set: {
+              chainAnchor: {
+                txHash:      anchor.txHash,
+                blockNumber: anchor.blockNumber,
+                daEventId:   eventId,
+                statsHash:   v2StatsHash,
+                anchoredAt:  anchor.anchoredAt,
+              },
+            },
+          });
+          logger.info(`[0g-chain] v2 login anchor stored wallet=${normalizedAddress} tx=${anchor.txHash}`);
+        }
+      }
+    );
 
     res.json({
       success: true,
@@ -446,9 +509,9 @@ router.get('/leaderboard', authenticate, async (req, res, next) => {
 });
 
 // GET /api/leaderboard/ai-comment?wallet=0x…
-// 0G Compute (primary) + Cloudflare Workers AI fallback — same pattern as Highway Hustle.
 router.get(
   '/leaderboard/ai-comment',
+  commentLimiter,
   authenticate,
   validateLeaderboardAiCommentQuery,
   async (req, res, next) => {
@@ -477,7 +540,7 @@ router.get(
         });
       }
 
-      const { comment, inferenceSource } = await generatePoolLeaderboardComment({
+      const { comment, inferenceSource, teeVerified, providerAddress } = await generatePoolLeaderboardComment({
         currentUserDoc: currentUser,
         topUserDoc: topUser,
       });
@@ -487,6 +550,8 @@ router.get(
         comment,
         _meta: {
           source: inferenceSource ?? null,
+          teeVerified: teeVerified ?? false,
+          providerAddress: providerAddress ?? null,
         },
       });
     } catch (error) {
@@ -824,6 +889,14 @@ router.get('/da/retrieve', authenticate, async (req, res, next) => {
     }
 
     const result = await zerogDAService.retrievePlayerEvent(eventId);
+
+    if (result.retrieved) {
+      await UserData.findOneAndUpdate(
+        { walletAddress: normalizedAddress },
+        { $set: { 'daSnapshot.daStatus': 'retrieved' } },
+      );
+    }
+
     res.json({ success: true, eventId, ...result });
   } catch (error) {
     next(error);
@@ -834,6 +907,124 @@ router.get('/da/health', authenticate, async (req, res, next) => {
   try {
     const da = await zerogDAService.healthCheck();
     res.json({ success: true, da });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/da/anchor?wallet=0x…
+// Returns the on-chain anchor linking DA eventId + stats hash to 0G EVM block.
+router.get('/da/anchor', authenticate, async (req, res, next) => {
+  try {
+    const wallet = req.query.wallet;
+    if (!wallet || typeof wallet !== 'string') {
+      return res.status(400).json({ success: false, error: "Missing 'wallet' query parameter" });
+    }
+    const normalizedAddress = wallet.toLowerCase().trim();
+    const user = await UserData.findOne({ walletAddress: normalizedAddress }).select('chainAnchor daSnapshot');
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const anchor = user.chainAnchor;
+    if (!anchor?.txHash) {
+      return res.json({
+        success: true,
+        anchored: false,
+        chainEnabled: zerogChainService.isEnabled(),
+        message: zerogChainService.isEnabled()
+          ? 'No on-chain anchor yet — anchor is written on next login'
+          : 'Chain anchoring not configured (ZG_POOL_ANCHOR_ADDRESS not set)',
+      });
+    }
+
+    res.json({
+      success:  true,
+      anchored: true,
+      anchor: {
+        txHash:      anchor.txHash,
+        blockNumber: anchor.blockNumber,
+        daEventId:   anchor.daEventId,
+        statsHash:   anchor.statsHash,
+        anchoredAt:  anchor.anchoredAt,
+        explorerUrl: `https://chainscan.0g.ai/tx/${anchor.txHash}`,
+      },
+      proof: {
+        daEventId:        anchor.daEventId,
+        daGatewayUrl:     `${zerogDAService.getGatewayBaseUrl()}/v1/da/status/${anchor.daEventId}`,
+        onChainTx:        anchor.txHash,
+        description: 'DA blob dispersed + BLS-signed → anchored on 0G EVM chain with block timestamp',
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==================== 0G COMPUTE ANALYSIS ====================
+
+// GET /api/player/coaching?wallet=0x…
+// 3 pool shot coaching tips generated via 0G Compute (TEE-verified).
+router.get('/player/coaching', computeLimiter, authenticate, async (req, res, next) => {
+  try {
+    const wallet = req.query.wallet;
+    if (!wallet || typeof wallet !== 'string') {
+      return res.status(400).json({ success: false, error: "Missing 'wallet' query parameter" });
+    }
+    const normalizedAddress = wallet.toLowerCase().trim();
+    const user = await UserData.findOne({ walletAddress: normalizedAddress }).select('stats');
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Player not found' });
+    }
+
+    const result = await getPoolShotCoaching(user.stats || {});
+    if (!result.ok) {
+      return res.json({ success: true, tips: null, _meta: { reason: result.reason } });
+    }
+
+    res.json({
+      success: true,
+      tips: result.tips,
+      _meta: {
+        provider: result.provider,
+        teeVerified: result.teeVerified,
+        providerAddress: result.providerAddress ?? null,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/player/insight?wallet=0x…&rank=5
+// One-sentence leaderboard performance insight via 0G Compute (TEE-verified).
+router.get('/player/insight', computeLimiter, authenticate, async (req, res, next) => {
+  try {
+    const wallet = req.query.wallet;
+    if (!wallet || typeof wallet !== 'string') {
+      return res.status(400).json({ success: false, error: "Missing 'wallet' query parameter" });
+    }
+    const rank = Math.max(1, Number(req.query.rank) || 1);
+    const normalizedAddress = wallet.toLowerCase().trim();
+    const user = await UserData.findOne({ walletAddress: normalizedAddress }).select('stats');
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Player not found' });
+    }
+
+    const result = await getPoolPerformanceInsight(user.stats || {}, rank);
+    if (!result.ok) {
+      return res.json({ success: true, insight: null, _meta: { reason: result.reason } });
+    }
+
+    res.json({
+      success: true,
+      insight: result.insight,
+      _meta: {
+        provider: result.provider,
+        teeVerified: result.teeVerified,
+        providerAddress: result.providerAddress ?? null,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -855,9 +1046,7 @@ router.get('/health', authenticate, (req, res) => {
     zerog: {
       daEnabled: process.env.ZEROG_DA_ENABLED !== 'false',
       computeConfigured: Boolean(zgKey),
-      cloudflareFallbackConfigured: Boolean(
-        process.env.CF_ACCOUNT_ID && process.env.CF_API_TOKEN,
-      ),
+      teeVerification: true,
     },
   });
 });

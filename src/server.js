@@ -7,8 +7,9 @@ const connectDB = require('./config/database');
 const apiRoutes = require('./routes/api');
 const errorHandler = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
-const blockchainService = require('./utils/blockchain'); // 🔗 NEW
-const zerogDAService = require('./services/zerogDAService');
+const blockchainService   = require('./utils/blockchain');
+const zerogDAService      = require('./services/zerogDAService');
+const zerogChainService   = require('./services/zerogChainService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,6 +33,8 @@ blockchainService.initialize()
 zerogDAService.healthCheck().then((s) => {
   logger.info(`[0g-da] gateway ${s.gateway} online=${s.online}`);
 });
+
+logger.info(`[0g-chain] anchor service ${zerogChainService.isEnabled() ? 'ENABLED' : 'DISABLED — set ZG_POOL_ANCHOR_ADDRESS + ZG_PRIVATE_KEY to enable'}`);
 
 // ✅ Trust proxy (needed for Render)
 app.set('trust proxy', 1);
@@ -97,35 +100,36 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'ZeroGPool Backend API with Blockchain Integration',
-    version: '2.1.0',
-    blockchain: {
-      enabled: blockchainService.isReady(),
-      network: '0G Network',
+    message: 'ZeroGPool Backend API — 0G Storage + DA + Compute + Chain',
+    version: '3.0.0',
+    zeroG: {
+      storage:       'Merkle-verified via 0G Storage SDK (browser-side)',
+      da:            `gateway online=${undefined}`,
+      compute:       'TEE-verified inference (verify_tee: true)',
+      chain:         zerogChainService.isEnabled() ? `anchor enabled — chainId ${process.env.ZG_CHAIN_ID || 16600}` : 'disabled (set ZG_POOL_ANCHOR_ADDRESS)',
+      sessionContract: blockchainService.isReady() ? 'enabled' : 'disabled',
     },
     endpoints: {
-      health: '/api/health',
-      login: 'POST /api/auth/login',
-      getUser: 'GET /api/user?walletAddress=<address>',
-      saveUser: 'POST /api/user',
-      leaderboard: 'GET /api/leaderboard',
-      leaderboardAiComment:
-        'GET /api/leaderboard/ai-comment?wallet=<0x-address> (0G Compute + CF fallback)',
-      blockchainSession: 'GET /api/blockchain/session/:walletAddress',
-      blockchainLoginCount: 'GET /api/blockchain/login-count/:walletAddress',
-      blockchainStats: 'GET /api/blockchain/stats',
-      daSnapshot: 'GET /api/da/snapshot?wallet=<address>',
-      daStatus: 'GET /api/da/status?wallet=<address>',
-      daRetrieve: 'GET /api/da/retrieve?wallet=<address>',
-      daHealth: 'GET /api/da/health',
-      webglManifest:
-        'GET /api/game/webgl-manifest (full manifest + CDN; JSON-RPC probes unless ?probe=0)',
-      storageIndexerHealth:
-        'GET /api/game/storage-indexer-health (compact indexer + manifest meta, no entries body; Cache-Control: no-store)',
-      // 🔗 Referral endpoints
-      referralGenerate: 'POST /api/referral/generate',
-      referralClaim: 'POST /api/referral/claim',
-      webglPlay: 'GET /zeroGpool-play/ (Unity WebGL — static files under public/zeroGpool-play/)',
+      health:               'GET /api/health',
+      login:                'POST /api/auth/login',
+      loginV2:              'POST /api/v2/login',
+      getUser:              'GET /api/user?walletAddress=<address>',
+      saveUser:             'POST /api/user',
+      leaderboard:          'GET /api/leaderboard',
+      leaderboardAiComment: 'GET /api/leaderboard/ai-comment?wallet=<0x> — TEE-verified 0G Compute',
+      playerCoaching:       'GET /api/player/coaching?wallet=<0x> — 0G Compute shot coaching',
+      playerInsight:        'GET /api/player/insight?wallet=<0x>&rank=N — 0G Compute leaderboard insight',
+      blockchainSession:    'GET /api/blockchain/session/:walletAddress',
+      blockchainStats:      'GET /api/blockchain/stats',
+      daSnapshot:           'GET /api/da/snapshot?wallet=<address>',
+      daStatus:             'GET /api/da/status?wallet=<address>',
+      daRetrieve:           'GET /api/da/retrieve?wallet=<address>',
+      daAnchor:             'GET /api/da/anchor?wallet=<address> — cross-layer proof (DA + chain)',
+      daHealth:             'GET /api/da/health',
+      webglManifest:        'GET /api/game/webgl-manifest',
+      storageIndexerHealth: 'GET /api/game/storage-indexer-health',
+      referralGenerate:     'POST /api/referral/generate',
+      referralClaim:        'POST /api/referral/claim',
     },
   });
 });

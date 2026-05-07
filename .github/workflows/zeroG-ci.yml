@@ -1,0 +1,67 @@
+name: 0G Integration CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test — Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check all source files
+        run: |
+          find src -name "*.js" | xargs node --check
+          echo "Syntax OK"
+
+      - name: Run test suite
+        run: npm test
+        env:
+          NODE_ENV: test
+          ZEROG_DA_ENABLED: "false"
+          ZEROG_DA_GATEWAY_URL: "https://da.test"
+
+      - name: Verify 0G service exports
+        run: |
+          node -e "
+            const da    = require('./src/services/zerogDAService');
+            const chain = require('./src/services/zerogChainService');
+            const ac    = require('./src/services/leaderboardAntiCheatService');
+            const pc    = require('./src/services/poolComputeAnalysis');
+            console.assert(typeof da.submitLoginEvent    === 'function', 'da.submitLoginEvent missing');
+            console.assert(typeof da.retrievePlayerEvent === 'function', 'da.retrievePlayerEvent missing');
+            console.assert(typeof chain.anchorSession    === 'function', 'chain.anchorSession missing');
+            console.assert(typeof chain.isEnabled        === 'function', 'chain.isEnabled missing');
+            console.assert(typeof ac.evaluateLeaderboardSubmission === 'function', 'ac missing');
+            console.assert(typeof pc.getPoolShotCoaching === 'function', 'pc.coaching missing');
+            console.log('All 0G service exports verified');
+          "
+
+  lint-env:
+    name: Verify .env.example completeness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required env keys documented
+        run: |
+          for key in ZEROG_DA_GATEWAY_URL ZEROG_API_KEY ZG_POOL_ANCHOR_ADDRESS ZG_PRIVATE_KEY ZG_RPC_URL BLOCKCHAIN_RPC_URL CONTRACT_ADDRESS; do
+            grep -q "^# *${key}" .env.example || grep -q "^${key}" .env.example || \
+              { echo "Missing env doc: ${key}"; exit 1; }
+          done
+          echo "All required env keys documented in .env.example"

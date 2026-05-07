@@ -95,10 +95,22 @@ const userDataSchema = new mongoose.Schema({
 
   /** Latest anti-cheat result attached to stat update writes. */
   antiCheatSnapshot: {
-    accepted: { type: Boolean, default: true },
-    source: { type: String, default: null },
-    reasons: [{ type: String }],
+    accepted:  { type: Boolean, default: true },
+    source:    { type: String, default: null },
+    reasons:   [{ type: String }],
     checkedAt: { type: Date, default: null },
+  },
+
+  /**
+   * On-chain anchor — links DA eventId + stats hash to 0G EVM block.
+   * Cross-layer proof: Storage (Merkle) → DA (BLS) → Chain (block-timestamped).
+   */
+  chainAnchor: {
+    txHash:      { type: String, default: null },
+    blockNumber: { type: Number, default: null },
+    daEventId:   { type: String, default: null },
+    statsHash:   { type: String, default: null },
+    anchoredAt:  { type: Date,   default: null },
   },
 }, {
   timestamps: true,

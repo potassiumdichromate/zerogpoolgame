@@ -1,8 +1,9 @@
 /**
- * Leaderboard-style commentary for ZeroGPool:
- * 0G Compute (OpenAI-compatible) first; Cloudflare Workers AI if 0G fails or returns junk.
+ * Leaderboard-style commentary for ZeroGPool via 0G Compute.
+ * TEE-verified inference — no external fallback.
  */
 
+const { randomUUID } = require('crypto');
 const logger = require("../utils/logger");
 const { getZerogConfig, poolPlayerForAi } = require("./zerogComputeService");
 
@@ -18,13 +19,6 @@ const POOL_TIMEOUT_MS = Math.min(
   Math.max(Number(process.env.ZEROG_POOL_TIMEOUT_MS || 8000), 1000),
   120_000,
 );
-
-const getCfConfig = () => ({
-  accountId: process.env.CF_ACCOUNT_ID,
-  apiToken: process.env.CF_API_TOKEN,
-  model: process.env.CF_LLM_MODEL || "@cf/meta/llama-3.1-8b-instruct-fast",
-  timeoutMs: Number(process.env.CF_TIMEOUT_MS || 6000),
-});
 
 const buildMessages = ({ currentPlayer, topPlayer }) => [
   {
@@ -68,6 +62,7 @@ const generateCommentZerog = async ({ currentPlayer, topPlayer }) => {
   }
 
   const messages = buildMessages({ currentPlayer, topPlayer });
+  const requestId = randomUUID();
   const started = Date.now();
   try {
     const response = await fetch(`${zg.baseUrl}/chat/completions`, {
@@ -82,6 +77,8 @@ const generateCommentZerog = async ({ currentPlayer, topPlayer }) => {
         temperature: 0.7,
         max_tokens: POOL_MAX_TOKENS,
         stream: false,
+        verify_tee: true,
+        provider: { sort: process.env.ZEROG_COMPUTE_ROUTING || 'latency' },
       }),
       signal: AbortSignal.timeout(POOL_TIMEOUT_MS),
     });
@@ -98,6 +95,10 @@ const generateCommentZerog = async ({ currentPlayer, topPlayer }) => {
     }
 
     const payload = await response.json().catch(() => null);
+    const trace = payload?.x_0g_trace || {};
+    const teeVerified = trace.tee_verified === true;
+    const providerAddress = trace.provider || null;
+
     const raw =
       typeof payload?.choices?.[0]?.message?.content === "string"
         ? payload.choices[0].message.content
@@ -116,6 +117,9 @@ const generateCommentZerog = async ({ currentPlayer, topPlayer }) => {
     logger.info("[0g-pool-ai] inference_success", {
       model: POOL_MODEL,
       latencyMs,
+      teeVerified,
+      providerAddress,
+      requestId,
       token_usage: usage,
     });
 
@@ -125,6 +129,9 @@ const generateCommentZerog = async ({ currentPlayer, topPlayer }) => {
       latencyMs,
       usage,
       model: POOL_MODEL,
+      teeVerified,
+      providerAddress,
+      requestId,
     };
   } catch (err) {
     const latencyMs = Date.now() - started;
@@ -137,66 +144,9 @@ const generateCommentZerog = async ({ currentPlayer, topPlayer }) => {
   }
 };
 
-const generateCommentCloudflare = async ({ currentPlayer, topPlayer }) => {
-  const cf = getCfConfig();
-  if (!cf.accountId || !cf.apiToken) {
-    logger.warn(
-      "[0g-pool-ai] cloudflare_fallback skipped — missing CF_ACCOUNT_ID or CF_API_TOKEN",
-    );
-    return null;
-  }
-
-  const messages = buildMessages({ currentPlayer, topPlayer });
-  const started = Date.now();
-  try {
-    const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/v1/chat/completions`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${cf.apiToken}`,
-      },
-      body: JSON.stringify({
-        model: cf.model,
-        messages,
-        temperature: 0.7,
-        max_tokens: 80,
-        stream: false,
-      }),
-      signal: AbortSignal.timeout(cf.timeoutMs),
-    });
-
-    const latencyMs = Date.now() - started;
-    if (!response.ok) {
-      logger.warn("[0g-pool-ai] cloudflare http_error", {
-        status: response.status,
-        latencyMs,
-      });
-      return null;
-    }
-
-    const payload = await response.json().catch(() => null);
-    const raw =
-      typeof payload?.choices?.[0]?.message?.content === "string"
-        ? payload.choices[0].message.content
-        : null;
-    const comment = raw?.trim() || null;
-    logger.info("[0g-pool-ai] cloudflare_fallback.success", {
-      model: cf.model,
-      latencyMs,
-    });
-    return comment || null;
-  } catch (err) {
-    logger.warn("[0g-pool-ai] cloudflare_fallback error", {
-      error: err.message,
-    });
-    return null;
-  }
-};
-
 /**
  * @param {{ currentUserDoc: object, topUserDoc: object }}
- * @returns {{ comment: string|null, inferenceSource: '0g_compute'|'cloudflare_fallback'|null }}
+ * @returns {{ comment: string|null, inferenceSource: '0g_compute'|null, teeVerified: boolean }}
  */
 const generatePoolLeaderboardComment = async ({
   currentUserDoc,
@@ -211,27 +161,15 @@ const generatePoolLeaderboardComment = async ({
     return {
       comment: zgResult.comment,
       inferenceSource: "0g_compute",
+      teeVerified: zgResult.teeVerified ?? false,
+      providerAddress: zgResult.providerAddress ?? null,
     };
   }
 
-  logger.info("[0g-pool-ai] using cloudflare fallback", {
+  logger.warn("[0g-pool-ai] 0G Compute failed", {
     reason: zgResult.phase || "0g_failed",
   });
-
-  const cfComment = await generateCommentCloudflare({
-    currentPlayer,
-    topPlayer,
-  });
-
-  if (cfComment && isValidComment(cfComment)) {
-    return {
-      comment: cfComment.trim(),
-      inferenceSource: "cloudflare_fallback",
-    };
-  }
-
-  logger.warn("[0g-pool-ai] primary and fallback failed");
-  return { comment: null, inferenceSource: null };
+  return { comment: null, inferenceSource: null, teeVerified: false };
 };
 
 module.exports = {
