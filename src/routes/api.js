@@ -292,7 +292,9 @@ router.get("/referral/stats", authenticate, async (req, res) => {
 // ==================== PUBLIC USER ENDPOINTS ====================
 
 // GET /api/user - Get or create user data (kept for backward compatibility)
-router.get('/user', authenticate, validateWalletAddress, async (req, res, next) => {
+router.get('/user', 
+  // authenticate, validateWalletAddress, 
+  async (req, res, next) => {
   try {
     const { walletAddress } = req.query;
     const normalizedAddress = walletAddress.toLowerCase();
@@ -315,7 +317,9 @@ router.get('/user', authenticate, validateWalletAddress, async (req, res, next) 
 });
 
 // POST /api/user - Save user data (kept for backward compatibility)
-router.post('/user', authenticate, validateWalletAddress, validateUserData, async (req, res, next) => {
+router.post('/user',
+  // authenticate, validateWalletAddress, validateUserData,  
+  async (req, res, next) => {
   try {
     const { walletAddress, ...userData } = req.body;
     const normalizedAddress = walletAddress.toLowerCase();
