@@ -98,34 +98,10 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'ZeroGPool Backend API — 0G Storage + DA + Compute + Chain',
+    message: 'ZeroGPool Backend API',
     version: '3.0.0',
-    zeroG: {
-      storage:       'Merkle-verified via 0G Storage SDK (browser-side)',
-      da:            `gateway online=${undefined}`,
-      compute:       'TEE-verified inference (verify_tee: true)',
-      sessionContract: blockchainService.isReady() ? 'enabled' : 'disabled',
-    },
-    endpoints: {
-      health:               'GET /api/health',
-      login:                'POST /api/auth/login',
-      loginV2:              'POST /api/v2/login',
-      getUser:              'GET /api/user?walletAddress=<address>',
-      saveUser:             'POST /api/user',
-      leaderboard:          'GET /api/leaderboard',
-      leaderboardAiComment: 'GET /api/leaderboard/ai-comment?wallet=<0x> — TEE-verified 0G Compute',
-      playerCoaching:       'GET /api/player/coaching?wallet=<0x> — 0G Compute shot coaching',
-      playerInsight:        'GET /api/player/insight?wallet=<0x>&rank=N — 0G Compute leaderboard insight',
-      blockchainSession:    'GET /api/blockchain/session/:walletAddress',
-      blockchainStats:      'GET /api/blockchain/stats',
-      daSnapshot:           'GET /api/da/snapshot?wallet=<address>',
-      daStatus:             'GET /api/da/status?wallet=<address>',
-      daRetrieve:           'GET /api/da/retrieve?wallet=<address>',
-      daHealth:             'GET /api/da/health',
-      webglManifest:        'GET /api/game/webgl-manifest',
-      storageIndexerHealth: 'GET /api/game/storage-indexer-health',
-      referralGenerate:     'POST /api/referral/generate',
-      referralClaim:        'POST /api/referral/claim',
+    status: {
+      blockchain: blockchainService.isReady() ? 'enabled' : 'disabled',
     },
   });
 });
