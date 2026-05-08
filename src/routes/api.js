@@ -14,6 +14,7 @@ const {
 } = require('../middleware/validation');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
+const { SiweMessage } = require('siwe');
 const logger = require('../utils/logger');
 const blockchainService = require('../utils/blockchain');
 
@@ -68,6 +69,81 @@ const queueDA = (trigger, eventType, userId, walletAddress, submitFn) => {
 
 // REFERRAL CONTROLLER
 const referralController = require("../controllers/referralController");
+
+// ==================== SIWE AUTH ====================
+
+// In-memory nonce store (address.toLowerCase() → { nonce, expiresAt })
+const siweNonces = new Map();
+const SIWE_NONCE_TTL_MS = 5 * 60 * 1000;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of siweNonces) {
+    if (val.expiresAt <= now) siweNonces.delete(key);
+  }
+}, 60 * 1000);
+
+// GET /api/auth/nonce?address=0x...
+router.get('/auth/nonce', (req, res) => {
+  const address = (req.query.address || '').toLowerCase();
+  if (!address || !/^0x[0-9a-f]{40}$/i.test(address)) {
+    return res.status(400).json({ success: false, error: 'valid address required' });
+  }
+  const nonce = crypto.randomBytes(16).toString('hex');
+  siweNonces.set(address, { nonce, expiresAt: Date.now() + SIWE_NONCE_TTL_MS });
+  return res.json({ success: true, nonce });
+});
+
+// POST /api/auth/siwe-login
+// Body: { message: "<SIWE EIP-4361 text>", signature: "0x..." }
+router.post('/auth/siwe-login', async (req, res, next) => {
+  try {
+    const { message, signature } = req.body || {};
+    if (!message || !signature) {
+      return res.status(400).json({ success: false, error: 'message and signature required' });
+    }
+
+    let siweMessage;
+    try {
+      siweMessage = new SiweMessage(message);
+    } catch {
+      return res.status(400).json({ success: false, error: 'invalid SIWE message format' });
+    }
+
+    const address = siweMessage.address.toLowerCase();
+    const stored = siweNonces.get(address);
+    if (!stored || stored.nonce !== siweMessage.nonce || stored.expiresAt <= Date.now()) {
+      siweNonces.delete(address);
+      return res.status(401).json({ success: false, error: 'invalid or expired nonce' });
+    }
+
+    const result = await siweMessage.verify({ signature });
+    siweNonces.delete(address);
+
+    if (!result.success) {
+      return res.status(401).json({ success: false, error: 'invalid SIWE signature' });
+    }
+
+    let userData = await UserData.findOne({ walletAddress: address });
+    if (!userData) {
+      userData = new UserData({ walletAddress: address });
+      await userData.save();
+      logger.info(`New user created via SIWE: ${address}`);
+    }
+
+    const token = generateToken(address, userData._id);
+
+    logger.info(`User logged in via SIWE: ${address}`);
+
+    return res.json({
+      success: true,
+      message: 'SIWE login successful',
+      data: { token, walletAddress: address, expiresIn: process.env.JWT_EXPIRES_IN || '30d' },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // ==================== PUBLIC ENDPOINTS ====================
 
