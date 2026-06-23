@@ -40,6 +40,7 @@ const { evaluateLeaderboardSubmission } = require('../services/leaderboardAntiCh
 const { derivePlayerIntelligence } = require('../services/playerIntelligenceService');
 
 router.use('/game', require('./gameWebglManifest'));
+router.use('/kult-points', require('./kultPoints'));
 
 // 0G DA: fire-and-forget — never blocks the API response.
 const queueDA = (trigger, eventType, userId, walletAddress, submitFn) => {
