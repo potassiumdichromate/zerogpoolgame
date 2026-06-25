@@ -38,9 +38,20 @@ const { generatePoolLeaderboardComment } = require('../services/aiPoolCommentSer
 const { getPoolShotCoaching, getPoolPerformanceInsight, getMatchAnalysis, getDifficultyTuning } = require('../services/poolComputeAnalysis');
 const { evaluateLeaderboardSubmission } = require('../services/leaderboardAntiCheatService');
 const { derivePlayerIntelligence } = require('../services/playerIntelligenceService');
+const { classifyCrossGamePerformance } = require('../utils/crossGameDifficulty');
 
 router.use('/game', require('./gameWebglManifest'));
 router.use('/kult-points', require('./kultPoints'));
+router.use('/cross-game', require('./crossGameRoutes'));
+
+const withPoolCrossGame = (user) => {
+  const data = user?.toObject ? user.toObject() : { ...(user || {}) };
+  const ballsPocketed = Number(data.stats?.totalBallsPocketed || 0);
+  return {
+    ...data,
+    crossGame: classifyCrossGamePerformance('zerogool', ballsPocketed),
+  };
+};
 
 // 0G DA: fire-and-forget — never blocks the API response.
 const queueDA = (trigger, eventType, userId, walletAddress, submitFn) => {
@@ -341,7 +352,7 @@ router.get('/user',
 
     res.json({
       success: true,
-      data: userData,
+      data: withPoolCrossGame(userData),
     });
   } catch (error) {
     next(error);
@@ -430,7 +441,7 @@ router.post('/user',
 
     res.json({
       success: true,
-      data: updatedUser,
+      data: withPoolCrossGame(updatedUser),
       blockchain: blockchainResult,
       antiCheat: {
         accepted: true,
@@ -461,6 +472,7 @@ router.get('/leaderboard', authenticate, async (req, res, next) => {
         walletAddress: user.walletAddress,
         playerName: user.playerData?.playerNames0 || 'Anonymous',
         totalBallsPocketed: stats.totalBallsPocketed || 0,
+        crossGame: classifyCrossGamePerformance('zerogool', stats.totalBallsPocketed || 0),
         totalGamesWon: (stats.totalGamesWonVsCPU || 0) + (stats.totalGamesWonVsHuman || 0),
         trust: {
           antiCheatSource: user.antiCheatSnapshot?.source || null,
@@ -1017,6 +1029,7 @@ router.post('/player/match', computeLimiter, authenticate, async (req, res, next
     res.json({
       success: true,
       intelligence,
+      crossGame: classifyCrossGamePerformance('zerogool', user.stats?.totalBallsPocketed || 0),
       analysis: analysis
         ? {
             feedback:       analysis.feedback,
