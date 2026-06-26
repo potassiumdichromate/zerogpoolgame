@@ -1,5 +1,6 @@
 const UserData = require('../models/UserData');
 const { classifyCrossGamePerformance } = require('../utils/crossGameDifficulty');
+const { grantWarzoneGunReward } = require('./warzoneGunRewardClient');
 
 const CROSS_GAME_BACKENDS = Object.freeze({
   zeroDash: 'https://zerodashbackend.onrender.com',
@@ -41,13 +42,31 @@ async function getLocalCrossGame(walletAddress) {
 
   const user = await UserData.findOne({ walletAddress: wallet }).select('walletAddress stats.totalBallsPocketed').lean();
   const ballsPocketed = Number(user?.stats?.totalBallsPocketed || 0);
+  const crossGame = classifyCrossGamePerformance('zerogool', ballsPocketed);
+  let rewardSync = null;
+  try {
+    rewardSync = await grantWarzoneGunReward({
+      walletAddress: wallet,
+      sourceGame: 'zerogool',
+      crossGame,
+    });
+  } catch (error) {
+    rewardSync = { eligible: true, granted: false, error: error?.message || 'Warzone reward sync failed' };
+  }
+
   return {
     gameKey: 'zerogool',
     game: 'Zerogool',
     walletAddress: wallet,
     available: Boolean(user),
     metrics: { ballsPocketed },
-    crossGame: classifyCrossGamePerformance('zerogool', ballsPocketed),
+    crossGame,
+    reward: {
+      type: 'warzone_gun',
+      name: 'ScarH',
+      unlocksAt: 'medium',
+      sync: rewardSync,
+    },
   };
 }
 
