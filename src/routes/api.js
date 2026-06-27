@@ -39,6 +39,7 @@ const { getPoolShotCoaching, getPoolPerformanceInsight, getMatchAnalysis, getDif
 const { evaluateLeaderboardSubmission } = require('../services/leaderboardAntiCheatService');
 const { derivePlayerIntelligence } = require('../services/playerIntelligenceService');
 const { classifyCrossGamePerformance } = require('../utils/crossGameDifficulty');
+const { queueWarzoneGunReward } = require('../services/warzoneGunRewardClient');
 
 router.use('/game', require('./gameWebglManifest'));
 router.use('/kult-points', require('./kultPoints'));
@@ -404,6 +405,16 @@ router.post('/user',
     );
 
     logger.info(`User data saved: ${normalizedAddress}`);
+    const crossGame = classifyCrossGamePerformance(
+      'zerogool',
+      updatedUser.stats?.totalBallsPocketed || 0,
+    );
+    queueWarzoneGunReward({
+      walletAddress: normalizedAddress,
+      sourceGame: 'zerogool',
+      crossGame,
+      source: 'user.save',
+    });
 
     // Fire-and-forget — never block save response on a chain write
     if (blockchainService.isReady() && updatedUser.stats) {

@@ -35,4 +35,28 @@ async function grantWarzoneGunReward({ walletAddress, sourceGame, crossGame }) {
   return { eligible: true, granted: true, ...(body.reward ? { reward: body.reward } : {}) };
 }
 
-module.exports = { grantWarzoneGunReward, isMediumOrHigher };
+function queueWarzoneGunReward({ walletAddress, sourceGame, crossGame, source = 'unknown' }) {
+  setImmediate(async () => {
+    try {
+      const result = await grantWarzoneGunReward({ walletAddress, sourceGame, crossGame });
+      if (result.eligible) {
+        console.log('[cross-game-warzone-reward] sync complete', {
+          source,
+          walletAddress,
+          sourceGame,
+          granted: result.granted,
+          reward: result.reward?.rewardName || result.reward?.rewardId || null,
+        });
+      }
+    } catch (error) {
+      console.error('[cross-game-warzone-reward] sync failed', {
+        source,
+        walletAddress,
+        sourceGame,
+        message: error?.message || String(error),
+      });
+    }
+  });
+}
+
+module.exports = { grantWarzoneGunReward, isMediumOrHigher, queueWarzoneGunReward };
