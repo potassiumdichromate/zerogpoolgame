@@ -3,7 +3,7 @@ const { classifyCrossGamePerformance } = require('../utils/crossGameDifficulty')
 const { grantWarzoneGunReward } = require('./warzoneGunRewardClient');
 
 const CROSS_GAME_BACKENDS = Object.freeze({
-  zeroDash: 'https://zerodashbackend.onrender.com',
+  zeroDash: 'https://zerog-zerodash.onrender.com',
   zeroGpool: 'https://zerogpoolgame.onrender.com/api',
   guessTheAi: 'https://guesstheai.xyz/backend/api',
   highwayHustle: 'https://highway-hustle-backend.onrender.com/api',
