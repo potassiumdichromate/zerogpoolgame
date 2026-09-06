@@ -93,6 +93,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://localhost:5173',
+  'https://pub-c57fda34f99145fc8d97b0a6b6faa237.r2.dev',
   'http://127.0.0.1:5173',
   'https://app.kult.games',
   'https://www.app.kult.games'
